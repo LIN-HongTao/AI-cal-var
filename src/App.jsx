@@ -13,6 +13,8 @@ import {
 import clsx from "clsx";
 
 import VarWorker from "./workers/varWorker?worker";
+import testData from "./data/testData.json";
+
 
 // ==================== 计算函数（对齐你原 Py 逻辑） ====================
 function zFromConf(conf) {
@@ -290,6 +292,29 @@ export default function App() {
           r.price > 0
       )
       .sort((a, b) => a.id.localeCompare(b.id) || a.date - b.date);
+
+  // ============ 加载测试数据 ============
+  const loadTestData = () => {
+    setFileName("内置测试数据 testData.json");
+    setRawRows(testData);
+
+    const cols = testData.length ? Object.keys(testData[0]) : [];
+    setColumns(cols);
+
+    // 自动识别列（沿用你原逻辑）
+    const autoPick = (cands) => {
+      for (const c of cands) if (cols.includes(c)) return c;
+      return cols[0] || "";
+    };
+    const _id = autoPick(["合约细则ID", "品种", "symbol", "ID"]);
+    const _date = autoPick(["报价日期", "日期", "date", "交易日"]);
+    const _price = autoPick(["结算价", "价格", "settle", "close"]);
+
+    setIdCol(_id);
+    setDateCol(_date);
+    setPriceCol(_price);
+  };
+
 
     // 去重同 id+date 取最后一条
     const tmp = [];
@@ -633,6 +658,13 @@ export default function App() {
                 }
               />
             </label>
+            {/* ✅ 新增按钮 */}
+            <button
+              onClick={loadTestData}
+              className="px-3 py-1.5 rounded-lg bg-white border shadow-sm text-sm hover:bg-slate-50 active:scale-95 transition"
+            >
+              加载测试数据
+            </button>
             {resultRows.length > 0 && (
               <button
                 onClick={exportResults}
