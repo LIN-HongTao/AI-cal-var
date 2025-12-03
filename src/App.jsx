@@ -9,11 +9,164 @@ import {
   XAxis,
   YAxis,
   Tooltip,
+  Legend,
 } from "recharts";
 import clsx from "clsx";
 
 import VarWorker from "./workers/varWorker?worker";
 import testData from "./data/testData.json";
+import { createPortal } from "react-dom";
+
+
+// ==================== 颜色调色板（多品种分色） ====================
+const PALETTE = [
+  "#2563eb", "#ef4444", "#10b981", "#f59e0b",
+  "#8b5cf6", "#06b6d4", "#f97316", "#22c55e",
+  "#e11d48", "#0ea5e9", "#84cc16", "#a855f7",
+];
+
+// ==================== 帮助文案（来自说明文件口径） ====================
+const HELP_TEXT = {
+  idCol: "品种/合约的唯一标识列，用于区分不同期货品种。多品种组合时按该列分组。",
+  dateCol: "交易日期列。多品种组合会按日期对齐，相关性与组合收益只使用对齐后的有效日期交集。",
+  priceCol: "结算价/收盘价列。先用该列计算日对数收益率 r_t = ln(S_t/S_{t-1})。",
+
+  conf1: "置信度 c1。VaR 定义为未来 T 天 PnL 分布左尾 (1-c) 分位点的损失绝对值。95% 对应正态分位 z=1.645。",
+  conf2: "置信度 c2。常用 99%（z=2.330），对应更极端的尾部风险。",
+
+  T1: "持有期 T1（交易日）。单品种/组合 VaR 会按 √T 放大到 T 天口径。",
+  T2: "持有期 T2（交易日）。文中示例为 5 天。VaR_{c,T} = z_c · σ · √T。",
+  T3: "持有期 T3（交易日）。文中示例为 22 天（约 1 个月）。",
+
+  window: "正态参数法的波动率窗口。σ_t 采用滚动 55 日标准差；若样本不足 55 条，则用全样本标准差。",
+
+  mcMethod:
+    "Monte Carlo 方法设置：\n" +
+    "• Normal：多元正态 i.i.d. 模型，用全样本均值 μ 与协方差 Σ 估计，按相关结构模拟路径。\n" +
+    "• t_auto：厚尾 t 分布 MC，自动拟合自由度 ν，更贴近期货尾部。\n" +
+    "• Bootstrap：历史收益重采样拼路径，减少强正态假设。",
+
+  sims:
+    "模拟次数 K。每次生成 K 条未来 T 天收益路径，取左尾 (1-c) 分位作为 VaR。K 越大越稳健但更慢（示例 K=200,000）。",
+
+  dfMax:
+    "t_auto 模式的自由度 ν 搜索上限。ν 越小尾部越厚；程序在 [2, dfMax] 内拟合最优 ν。",
+
+  mode:
+    "计算模式：\n" +
+    "• 单品种：对一个期货品种计算 VaR。\n" +
+    "• 多品种组合：按日期对齐后估计相关性/协方差，再按权重计算组合 VaR。",
+
+  singleId: "单品种模式下选择的目标品种。",
+
+  portfolioIds:
+    "多品种组合选取列表。组合 VaR 只对“对齐后有效交集日期”进行计算；交集太少会提示失败。",
+
+  weightsText:
+    "组合权重向量 w（权重和为 1）。默认等权；如需自定义，写成“品种=权重,品种=权重…”，程序会自动归一化。",
+};
+
+// ==================== 问号 hover 帮助组件 ====================
+const Help = ({ tip }) => {
+  const iconRef = React.useRef(null);
+  const [open, setOpen] = React.useState(false);
+  const [pos, setPos] = React.useState({ x: 0, y: 0, place: "bottom" });
+
+  const computePos = React.useCallback(() => {
+    const el = iconRef.current;
+    if (!el) return;
+
+    const rect = el.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    // 估计 tooltip 尺寸
+    const bubbleW = 280;
+    const bubbleH = 160;
+    const padding = 8;
+
+    // 默认：下方居中
+    let x = rect.left + rect.width / 2;
+    let y = rect.bottom + 10;
+    let place = "bottom";
+
+    // 水平 clamp，避免出屏
+    const minX = padding + bubbleW / 2;
+    const maxX = vw - padding - bubbleW / 2;
+    x = Math.min(Math.max(x, minX), maxX);
+
+    // 垂直：下面放不下就翻到上面
+    if (y + bubbleH > vh - padding) {
+      y = rect.top - 10;
+      place = "top";
+    }
+
+    setPos({ x, y, place });
+  }, []);
+
+  const openTip = () => {
+    computePos();
+    setOpen(true);
+  };
+  const closeTip = () => setOpen(false);
+
+  React.useEffect(() => {
+    if (!open) return;
+    const onRecalc = () => computePos();
+    window.addEventListener("resize", onRecalc);
+    window.addEventListener("scroll", onRecalc, true);
+    return () => {
+      window.removeEventListener("resize", onRecalc);
+      window.removeEventListener("scroll", onRecalc, true);
+    };
+  }, [open, computePos]);
+
+  return (
+    <>
+      <span
+        ref={iconRef}
+        onMouseEnter={openTip}
+        onMouseLeave={closeTip}
+        className="inline-flex items-center ml-1 align-middle"
+      >
+        <span
+          className="w-4 h-4 inline-flex items-center justify-center rounded-full
+                     bg-slate-100 text-slate-600 text-[10px] font-bold border border-slate-300
+                     cursor-help hover:bg-slate-900 hover:text-white transition"
+        >
+          ?
+        </span>
+      </span>
+
+      {open &&
+        createPortal(
+          <div
+            className="fixed z-[2147483647] w-[280px] max-w-[80vw]
+                       rounded-xl bg-slate-900 text-white text-xs leading-relaxed
+                       px-3 py-2 shadow-2xl whitespace-pre-wrap
+                       animate-in fade-in zoom-in-95"
+            style={{
+              left: pos.x,
+              top: pos.y,
+              transform:
+                pos.place === "bottom"
+                  ? "translate(-50%, 0)"
+                  : "translate(-50%, -100%)",
+            }}
+          >
+            {tip}
+
+            <div
+              className="absolute left-1/2 -translate-x-1/2 w-2 h-2 bg-slate-900 rotate-45"
+              style={pos.place === "bottom" ? { top: -4 } : { bottom: -4 }}
+            />
+          </div>,
+          document.body
+        )}
+    </>
+  );
+};
+
 
 
 // ==================== 计算函数（对齐你原 Py 逻辑） ====================
@@ -21,28 +174,12 @@ function zFromConf(conf) {
   if (Math.abs(conf - 0.95) < 1e-6) return 1.645;
   if (Math.abs(conf - 0.99) < 1e-6) return 2.33;
   // Moro approximation
-  const a = [
-    2.50662823884,
-    -18.61500062529,
-    41.39119773534,
-    -25.44106049637,
-  ];
-  const b = [
-    -8.4735109309,
-    23.08336743743,
-    -21.06224101826,
-    3.13082909833,
-  ];
+  const a = [2.50662823884, -18.61500062529, 41.39119773534, -25.44106049637];
+  const b = [-8.4735109309, 23.08336743743, -21.06224101826, 3.13082909833];
   const c = [
-    0.3374754822726147,
-    0.9761690190917186,
-    0.1607979714918209,
-    0.0276438810333863,
-    0.0038405729373609,
-    0.0003951896511919,
-    0.0000321767881768,
-    0.0000002888167364,
-    0.0000003960315187,
+    0.3374754822726147, 0.9761690190917186, 0.1607979714918209,
+    0.0276438810333863, 0.0038405729373609, 0.0003951896511919,
+    0.0000321767881768, 0.0000002888167364, 0.0000003960315187,
   ];
   const y = conf - 0.5;
   if (Math.abs(y) < 0.42) {
@@ -78,25 +215,18 @@ function normalVarSingle(logRetArr, conf, T, window) {
   return { var: z * sigma * Math.sqrt(T), sigma };
 }
 
-/**
- * 对齐为 wide format：每行一个 date，每列一个 id 的 logRet
- * 注意：这里只做交集日期；过滤 NaN 在外层处理
- */
 function alignedWideReturns(grouped) {
   const ids = Object.keys(grouped);
-
-  // 用 timestamp（number）作为 key
   const mapById = {};
   ids.forEach((id) => {
     const m = new Map();
     grouped[id].forEach((r) => {
-      const key = +r.date; // 等价 r.date.getTime()
+      const key = +r.date;
       m.set(key, r.logRet);
     });
     mapById[id] = m;
   });
 
-  // 取交集日期（这里的 key 是 number）
   const dateKeys = ids.reduce((acc, id) => {
     const s = new Set(mapById[id].keys());
     if (acc == null) return s;
@@ -106,12 +236,46 @@ function alignedWideReturns(grouped) {
   const alignedKeys = [...dateKeys].sort((a, b) => a - b);
 
   return alignedKeys.map((k) => {
-    const row = { date: new Date(k) }; // 还原 Date 仅用于展示
+    const row = { date: new Date(k) };
     ids.forEach((id) => (row[id] = mapById[id].get(k)));
     return row;
   });
 }
 
+function alignedWidePrices(grouped) {
+  const ids = Object.keys(grouped);
+  const mapById = {};
+  ids.forEach((id) => {
+    const m = new Map();
+    grouped[id].forEach((r) => {
+      const key = +r.date;
+      m.set(key, r.price);
+    });
+    mapById[id] = m;
+  });
+
+  const allKeysSet = new Set();
+  ids.forEach((id) => {
+    for (const k of mapById[id].keys()) allKeysSet.add(k);
+  });
+  const keys = [...allKeysSet].sort((a, b) => a - b);
+
+  const lastById = Object.fromEntries(ids.map((id) => [id, null]));
+
+  return keys.map((k) => {
+    const row = { date: new Date(k) };
+    ids.forEach((id) => {
+      const raw = mapById[id].get(k);
+      if (Number.isFinite(raw) && raw !== 0) {
+        lastById[id] = raw;
+        row[id] = raw;
+      } else {
+        row[id] = lastById[id];
+      }
+    });
+    return row;
+  });
+}
 
 function corrMatrix(rows, ids) {
   const n = rows.length;
@@ -143,10 +307,6 @@ function corrMatrix(rows, ids) {
   return corr;
 }
 
-/**
- * 组合正态参数 VaR
- * 修复：wide 行级过滤 NaN；corr 才能正常
- */
 function normalVarPortfolio(grouped, conf, T, window, weights) {
   const ids = Object.keys(grouped);
   const m = ids.length;
@@ -158,11 +318,7 @@ function normalVarPortfolio(grouped, conf, T, window, weights) {
   });
 
   let wide = alignedWideReturns(grouped);
-
-  // ✅ 关键修复：过滤掉任何品种非有限的行（含第一行 NaN）
-  wide = wide.filter((row) =>
-    ids.every((id) => Number.isFinite(row[id]))
-  );
+  wide = wide.filter((row) => ids.every((id) => Number.isFinite(row[id])));
 
   if (wide.length < 2) return { var: NaN, sigmas, corr: null };
 
@@ -229,7 +385,6 @@ export default function App() {
   const [mcMethod, setMcMethod] = useState("normal"); // normal | t_auto | bootstrap
   const [sims, setSims] = useState(200000);
   const [dfMax, setDfMax] = useState(60);
-  const [seed, setSeed] = useState("");
 
   const [mode, setMode] = useState("single"); // single | portfolio
   const [singleId, setSingleId] = useState("");
@@ -240,7 +395,9 @@ export default function App() {
   const [progressText, setProgressText] = useState("");
   const [resultRows, setResultRows] = useState([]);
   const [summary, setSummary] = useState("");
-  const [retSeries, setRetSeries] = useState([]);
+
+  const [priceSeries, setPriceSeries] = useState([]);
+  const [priceSeriesIds, setPriceSeriesIds] = useState([]);
 
   // ============ 文件读取 ============
   const onFile = async (file) => {
@@ -259,8 +416,19 @@ export default function App() {
     setRawRows(rows);
     const cols = rows.length ? Object.keys(rows[0]) : [];
     setColumns(cols);
+    autoSetColumns(cols);
+  };
 
-    // 自动识别列
+  // ============ 加载内置测试数据 ============
+  const loadTestData = () => {
+    setFileName("内置测试数据 testData.json");
+    setRawRows(testData);
+    const cols = testData.length ? Object.keys(testData[0]) : [];
+    setColumns(cols);
+    autoSetColumns(cols);
+  };
+
+  const autoSetColumns = (cols) => {
     const autoPick = (cands) => {
       for (const c of cands) if (cols.includes(c)) return c;
       return cols[0] || "";
@@ -273,7 +441,7 @@ export default function App() {
     setPriceCol(_price);
   };
 
-  // ============ 数据预处理（读表+log收益） ============
+  // ============ 数据预处理 ============
   const { groupedAll, idsAll } = useMemo(() => {
     if (!rawRows.length || !idCol || !dateCol || !priceCol)
       return { groupedAll: {}, idsAll: [] };
@@ -293,30 +461,6 @@ export default function App() {
       )
       .sort((a, b) => a.id.localeCompare(b.id) || a.date - b.date);
 
-  // ============ 加载测试数据 ============
-  const loadTestData = () => {
-    setFileName("内置测试数据 testData.json");
-    setRawRows(testData);
-
-    const cols = testData.length ? Object.keys(testData[0]) : [];
-    setColumns(cols);
-
-    // 自动识别列（沿用你原逻辑）
-    const autoPick = (cands) => {
-      for (const c of cands) if (cols.includes(c)) return c;
-      return cols[0] || "";
-    };
-    const _id = autoPick(["合约细则ID", "品种", "symbol", "ID"]);
-    const _date = autoPick(["报价日期", "日期", "date", "交易日"]);
-    const _price = autoPick(["结算价", "价格", "settle", "close"]);
-
-    setIdCol(_id);
-    setDateCol(_date);
-    setPriceCol(_price);
-  };
-
-
-    // 去重同 id+date 取最后一条
     const tmp = [];
     for (let i = 0; i < cleaned.length; i++) {
       const cur = cleaned[i];
@@ -330,12 +474,12 @@ export default function App() {
       } else tmp.push(cur);
     }
 
-    // log returns
     const grouped = {};
     for (const row of tmp) {
       if (!grouped[row.id]) grouped[row.id] = [];
       grouped[row.id].push(row);
     }
+
     const retGrouped = {};
     for (const id of Object.keys(grouped)) {
       const arr = grouped[id];
@@ -386,18 +530,19 @@ export default function App() {
     }
   };
 
+  const fmtPct2 = (v) =>
+    Number.isFinite(v) ? `${(v * 100).toFixed(2)}%` : "—";
+
   // ============ 计算入口 ============
   const runCalc = async () => {
     if (!idsAll.length) return;
-
-    if (seed.trim()) {
-      console.log("seed ignored in pure-js version:", seed);
-    }
 
     setLoading(true);
     setProgressText("预处理中…");
     setResultRows([]);
     setSummary("");
+    setPriceSeries([]);
+    setPriceSeriesIds([]);
 
     const confs = [conf1, conf2];
     const Ts = [T1, T2, T3];
@@ -427,17 +572,16 @@ export default function App() {
       if (mode === "single") {
         const cid = singleId;
         const sub = groupedAll[cid];
-        const r = sub.map((x) => x.logRet).filter(Number.isFinite);
+        const rAll = sub.map((x) => x.logRet).filter(Number.isFinite);
 
-        const sigmaLatest = latestSigmaRolling(r, window);
+        const sigmaLatest = latestSigmaRolling(rAll, window);
         lines.push(`[单品种] ${cid}`);
         lines.push(`最新 σ(窗口规则) = ${sigmaLatest.toFixed(6)}\n`);
 
-        // 正态参数
         lines.push("— 正态参数 VaR（收益率口径）—");
         for (const c of confs) {
           const z = zFromConf(c);
-          const vList = Ts.map((T) => normalVarSingle(r, c, T, window).var);
+          const vList = Ts.map((T) => normalVarSingle(rAll, c, T, window).var);
           lines.push(
             `  c=${c.toFixed(3)}(z=${z.toFixed(3)}) | ` +
               Ts.map(
@@ -453,20 +597,19 @@ export default function App() {
             extra: `z=${z.toFixed(3)} | σ_latest=${sigmaLatest.toFixed(
               6
             )} | window=${window}`,
-            v1: `${vList[0].toFixed(6)} (${(vList[0] * 100).toFixed(3)}%)`,
-            v2: `${vList[1].toFixed(6)} (${(vList[1] * 100).toFixed(3)}%)`,
-            v3: `${vList[2].toFixed(6)} (${(vList[2] * 100).toFixed(3)}%)`,
+            v1: fmtPct2(vList[0]),
+            v2: fmtPct2(vList[1]),
+            v3: fmtPct2(vList[2]),
           });
         }
         lines.push("");
 
-        // MC
         lines.push(`— 蒙特卡洛 VaR（${mcMethod}）—`);
         for (const c of confs) {
           const vList = [];
           for (const T of Ts) {
             setProgressText(`MC 计算中：c=${c.toFixed(3)} T=${T} …`);
-            const out = await callWorkerSingle(r, c, T);
+            const out = await callWorkerSingle(rAll, c, T);
             vList.push(out.var);
           }
           lines.push(
@@ -482,30 +625,35 @@ export default function App() {
             method: `MC ${mcMethod}（${cid}）`,
             conf: c.toFixed(3),
             extra: `K=${sims}${mcMethod === "t_auto" ? " | ν自动拟合" : ""}`,
-            v1: `${vList[0].toFixed(6)} (${(vList[0] * 100).toFixed(3)}%)`,
-            v2: `${vList[1].toFixed(6)} (${(vList[1] * 100).toFixed(3)}%)`,
-            v3: `${vList[2].toFixed(6)} (${(vList[2] * 100).toFixed(3)}%)`,
+            v1: fmtPct2(vList[0]),
+            v2: fmtPct2(vList[1]),
+            v3: fmtPct2(vList[2]),
           });
         }
 
-        setRetSeries(
-          sub
-            .map((x) => ({
+        let last = null;
+        const series = sub
+          .map((x) => {
+            const p = Number(x.price);
+            if (Number.isFinite(p) && p !== 0) last = p;
+            const val = Number.isFinite(p) && p !== 0 ? p : last;
+            return {
               date: x.date.toISOString().slice(0, 10),
-              logRet: x.logRet,
-            }))
-            .filter((x) => Number.isFinite(x.logRet))
-        );
+              [cid]: val,
+            };
+          })
+          .filter((x) => Number.isFinite(x[cid]));
+
+        setPriceSeriesIds([cid]);
+        setPriceSeries(series);
       } else {
-        // ==================== portfolio 模式（修复版） ====================
         let ids = portfolioIds;
         if (ids.length < 2) throw new Error("组合品种不足（至少选 2 个）");
 
-        // 初步 grouped/weights
-        const grouped0 = Object.fromEntries(ids.map((id) => [id, groupedAll[id]]));
-        const weights0 = parseWeights(ids);
+        const grouped0 = Object.fromEntries(
+          ids.map((id) => [id, groupedAll[id]])
+        );
 
-        // ✅ 先剔除样本不足的品种
         const validIds = ids.filter((id) => {
           const r = grouped0[id].map((x) => x.logRet).filter(Number.isFinite);
           return r.length >= 2;
@@ -514,7 +662,9 @@ export default function App() {
           throw new Error("有效品种不足：至少 2 个品种拥有 >=2 条有效收益率。");
         }
 
-        const grouped = Object.fromEntries(validIds.map((id) => [id, grouped0[id]]));
+        const grouped = Object.fromEntries(
+          validIds.map((id) => [id, grouped0[id]])
+        );
         const weights = parseWeights(validIds);
         ids = validIds;
 
@@ -525,15 +675,10 @@ export default function App() {
           })
         );
 
-        // ✅ 自检 log（你要的那段）
         let wideRaw = alignedWideReturns(grouped);
         let wideClean = wideRaw.filter((row) =>
           ids.every((id) => Number.isFinite(row[id]))
         );
-        console.log("wide raw:", wideRaw.length);
-        console.log("wide clean:", wideClean.length);
-        console.log("sigmaLatest:", sigLatest);
-
         if (wideClean.length < 2) {
           throw new Error(
             "组合对齐后的有效交集日期太少（wideClean<2）。请换一组交易日期重叠更多的品种，或缩小品种范围。"
@@ -543,14 +688,15 @@ export default function App() {
         const sigTxt = ids
           .map((id) => `${id}:${sigLatest[id].toFixed(6)}`)
           .join("; ");
-        const wTxt = ids.map((id) => `${id}=${weights[id].toFixed(3)}`).join(", ");
+        const wTxt = ids
+          .map((id) => `${id}=${weights[id].toFixed(3)}`)
+          .join(", ");
 
         lines.push("[多品种组合]");
         lines.push("参与品种： " + ids.join(", "));
         lines.push("权重（归一化后）： " + wTxt);
         lines.push("最新 σ_i： " + sigTxt + "\n");
 
-        // 正态参数组合 VaR
         lines.push("— 正态参数 组合 VaR（收益率口径）—");
         for (const c of confs) {
           const z = zFromConf(c);
@@ -570,16 +716,17 @@ export default function App() {
             method: "正态参数法（组合）",
             conf: c.toFixed(3),
             extra: `z=${z.toFixed(3)} | w=[${wTxt}] | σ_latest=[${sigTxt}]`,
-            v1: `${vList[0].toFixed(6)} (${(vList[0] * 100).toFixed(3)}%)`,
-            v2: `${vList[1].toFixed(6)} (${(vList[1] * 100).toFixed(3)}%)`,
-            v3: `${vList[2].toFixed(6)} (${(vList[2] * 100).toFixed(3)}%)`,
+            v1: fmtPct2(vList[0]),
+            v2: fmtPct2(vList[1]),
+            v3: fmtPct2(vList[2]),
           });
         }
 
-        // 组合 MC：用 wideClean -> 组合历史收益
         const wVec = ids.map((id) => weights[id]);
         const rpHist = wideClean
-          .map((r) => ids.reduce((s, id, i) => s + r[id] * wVec[i], 0))
+          .map((r) =>
+            ids.reduce((s, id, i) => s + r[id] * wVec[i], 0)
+          )
           .filter(Number.isFinite);
 
         lines.push("\n— 蒙特卡洛 组合 VaR（历史组合收益 i.i.d.）—");
@@ -603,18 +750,18 @@ export default function App() {
             method: `MC ${mcMethod}（组合）`,
             conf: c.toFixed(3),
             extra: `w=[${wTxt}] | K=${sims}`,
-            v1: `${vList[0].toFixed(6)} (${(vList[0] * 100).toFixed(3)}%)`,
-            v2: `${vList[1].toFixed(6)} (${(vList[1] * 100).toFixed(3)}%)`,
-            v3: `${vList[2].toFixed(6)} (${(vList[2] * 100).toFixed(3)}%)`,
+            v1: fmtPct2(vList[0]),
+            v2: fmtPct2(vList[1]),
+            v3: fmtPct2(vList[2]),
           });
         }
 
-        setRetSeries(
-          wideClean.map((x) => ({
-            date: new Date(x.date).toISOString().slice(0, 10),
-            logRet: ids.reduce((s, id, i) => s + x[id] * wVec[i], 0),
-          }))
-        );
+        const widePrice = alignedWidePrices(grouped).map((row) => ({
+          ...row,
+          date: row.date.toISOString().slice(0, 10),
+        }));
+        setPriceSeriesIds(ids);
+        setPriceSeries(widePrice);
       }
 
       setSummary(lines.join("\n"));
@@ -627,7 +774,6 @@ export default function App() {
     }
   };
 
-  // ============ 导出结果 ============
   const exportResults = () => {
     const ws = XLSX.utils.json_to_sheet(resultRows);
     const wb = XLSX.utils.book_new();
@@ -658,13 +804,14 @@ export default function App() {
                 }
               />
             </label>
-            {/* ✅ 新增按钮 */}
+
             <button
               onClick={loadTestData}
               className="px-3 py-1.5 rounded-lg bg-white border shadow-sm text-sm hover:bg-slate-50 active:scale-95 transition"
             >
               加载测试数据
             </button>
+
             {resultRows.length > 0 && (
               <button
                 onClick={exportResults}
@@ -677,11 +824,11 @@ export default function App() {
         </div>
       </div>
 
-      {/* 主体 */}
-      <div className="max-w-[1600px] mx-auto h-[calc(100%-56px)] px-4 py-4">
-        <div className="grid grid-cols-12 gap-4 h-full">
-          {/* 左侧参数区 */}
-          <div className="col-span-12 lg:col-span-4 xl:col-span-3 space-y-3 overflow-auto pr-1">
+      {/* 主体：只在最外层允许滚动 */}
+      <div className="max-w-[1600px] mx-auto h-[calc(100%-56px)] px-4 py-4 overflow-auto">
+        <div className="grid grid-cols-12 gap-4">
+          {/* 左侧参数区（不单独滚动） */}
+          <div className="col-span-12 lg:col-span-4 xl:col-span-3 space-y-3 pr-1">
             <Card title="1. 数据输入">
               <div className="text-sm text-slate-600">
                 {fileName || "未选择文件"}
@@ -690,7 +837,13 @@ export default function App() {
 
             <Card title="2. 列映射（自动识别，可手动修改）">
               <div className="space-y-2">
-                <Field label="品种ID列">
+                <Field
+                  label={
+                    <span className="inline-flex items-center">
+                      品种ID列 <Help tip={HELP_TEXT.idCol} />
+                    </span>
+                  }
+                >
                   <select
                     className="w-full border rounded-lg px-2 py-1"
                     value={idCol}
@@ -701,7 +854,14 @@ export default function App() {
                     ))}
                   </select>
                 </Field>
-                <Field label="日期列">
+
+                <Field
+                  label={
+                    <span className="inline-flex items-center">
+                      日期列 <Help tip={HELP_TEXT.dateCol} />
+                    </span>
+                  }
+                >
                   <select
                     className="w-full border rounded-lg px-2 py-1"
                     value={dateCol}
@@ -712,7 +872,14 @@ export default function App() {
                     ))}
                   </select>
                 </Field>
-                <Field label="结算价列">
+
+                <Field
+                  label={
+                    <span className="inline-flex items-center">
+                      结算价列 <Help tip={HELP_TEXT.priceCol} />
+                    </span>
+                  }
+                >
                   <select
                     className="w-full border rounded-lg px-2 py-1"
                     value={priceCol}
@@ -728,7 +895,13 @@ export default function App() {
 
             <Card title="3.1 共用参数">
               <div className="space-y-2">
-                <Field label="置信度 c1">
+                <Field
+                  label={
+                    <span className="inline-flex items-center">
+                      置信度 c1 <Help tip={HELP_TEXT.conf1} />
+                    </span>
+                  }
+                >
                   <input
                     type="number"
                     step="0.001"
@@ -739,7 +912,14 @@ export default function App() {
                     onChange={(e) => setConf1(+e.target.value)}
                   />
                 </Field>
-                <Field label="置信度 c2">
+
+                <Field
+                  label={
+                    <span className="inline-flex items-center">
+                      置信度 c2 <Help tip={HELP_TEXT.conf2} />
+                    </span>
+                  }
+                >
                   <input
                     type="number"
                     step="0.001"
@@ -750,7 +930,14 @@ export default function App() {
                     onChange={(e) => setConf2(+e.target.value)}
                   />
                 </Field>
-                <Field label="短期交易日 T1">
+
+                <Field
+                  label={
+                    <span className="inline-flex items-center">
+                      短期交易日 T1 <Help tip={HELP_TEXT.T1} />
+                    </span>
+                  }
+                >
                   <input
                     type="number"
                     min="1"
@@ -759,7 +946,14 @@ export default function App() {
                     onChange={(e) => setT1(+e.target.value)}
                   />
                 </Field>
-                <Field label="中期交易日 T2">
+
+                <Field
+                  label={
+                    <span className="inline-flex items-center">
+                      中期交易日 T2 <Help tip={HELP_TEXT.T2} />
+                    </span>
+                  }
+                >
                   <input
                     type="number"
                     min="1"
@@ -768,7 +962,14 @@ export default function App() {
                     onChange={(e) => setT2(+e.target.value)}
                   />
                 </Field>
-                <Field label="长期交易日 T3">
+
+                <Field
+                  label={
+                    <span className="inline-flex items-center">
+                      长期交易日 T3 <Help tip={HELP_TEXT.T3} />
+                    </span>
+                  }
+                >
                   <input
                     type="number"
                     min="1"
@@ -781,7 +982,13 @@ export default function App() {
             </Card>
 
             <Card title="3.2 正态分布特有参数">
-              <Field label="σ 窗口（交易日）">
+              <Field
+                label={
+                  <span className="inline-flex items-center">
+                    σ 窗口（交易日） <Help tip={HELP_TEXT.window} />
+                  </span>
+                }
+              >
                 <input
                   type="number"
                   min="5"
@@ -795,7 +1002,13 @@ export default function App() {
 
             <Card title="3.3 Monte Carlo 特有参数">
               <div className="space-y-2">
-                <Field label="MC 方法">
+                <Field
+                  label={
+                    <span className="inline-flex items-center">
+                      MC 方法 <Help tip={HELP_TEXT.mcMethod} />
+                    </span>
+                  }
+                >
                   <select
                     className="w-full border rounded-lg px-2 py-1"
                     value={mcMethod}
@@ -803,12 +1016,17 @@ export default function App() {
                   >
                     <option value="normal">Normal MC（正态）</option>
                     <option value="t_auto">t-MC（厚尾，ν自动拟合）</option>
-                    <option value="bootstrap">
-                      Bootstrap MC（历史重采样）
-                    </option>
+                    <option value="bootstrap">Bootstrap MC（历史重采样）</option>
                   </select>
                 </Field>
-                <Field label="模拟次数 K">
+
+                <Field
+                  label={
+                    <span className="inline-flex items-center">
+                      模拟次数 K <Help tip={HELP_TEXT.sims} />
+                    </span>
+                  }
+                >
                   <input
                     type="number"
                     min="1000"
@@ -818,7 +1036,14 @@ export default function App() {
                     onChange={(e) => setSims(+e.target.value)}
                   />
                 </Field>
-                <Field label="t df 搜索上限">
+
+                <Field
+                  label={
+                    <span className="inline-flex items-center">
+                      t df 搜索上限 <Help tip={HELP_TEXT.dfMax} />
+                    </span>
+                  }
+                >
                   <input
                     type="number"
                     min="10"
@@ -828,19 +1053,16 @@ export default function App() {
                     onChange={(e) => setDfMax(+e.target.value)}
                   />
                 </Field>
-                <Field label="随机种子（可选）">
-                  <input
-                    type="text"
-                    placeholder="前端版本仅弱复现"
-                    className="w-full border rounded-lg px-2 py-1"
-                    value={seed}
-                    onChange={(e) => setSeed(e.target.value)}
-                  />
-                </Field>
               </div>
             </Card>
 
-            <Card title="4. 计算模式">
+            <Card
+              title={
+                <span className="inline-flex items-center">
+                  4. 计算模式 <Help tip={HELP_TEXT.mode} />
+                </span>
+              }
+            >
               <div className="space-y-3">
                 <div className="flex gap-2">
                   <button
@@ -868,7 +1090,13 @@ export default function App() {
                 </div>
 
                 {mode === "single" && (
-                  <Field label="单品种选择">
+                  <Field
+                    label={
+                      <span className="inline-flex items-center">
+                        单品种选择 <Help tip={HELP_TEXT.singleId} />
+                      </span>
+                    }
+                  >
                     <select
                       className="w-full border rounded-lg px-2 py-1"
                       value={singleId}
@@ -883,10 +1111,12 @@ export default function App() {
 
                 {mode === "portfolio" && (
                   <>
-                    <div className="text-sm text-slate-600">
+                    <div className="text-sm text-slate-600 inline-flex items-center">
                       勾选参与组合品种：
+                      <Help tip={HELP_TEXT.portfolioIds} />
                     </div>
-                    <div className="grid grid-cols-2 gap-2 max-h-40 overflow-auto">
+
+                    <div className="grid grid-cols-2 gap-2 max-h-40 overflow-auto border rounded-lg p-2 bg-white">
                       {idsAll.map((id) => {
                         const checked = portfolioIds.includes(id);
                         return (
@@ -910,7 +1140,14 @@ export default function App() {
                         );
                       })}
                     </div>
-                    <Field label="组合权重（可选）">
+
+                    <Field
+                      label={
+                        <span className="inline-flex items-center">
+                          组合权重（可选） <Help tip={HELP_TEXT.weightsText} />
+                        </span>
+                      }
+                    >
                       <input
                         type="text"
                         placeholder="CFI=0.7,RBFI=0.3"
@@ -935,12 +1172,9 @@ export default function App() {
             </motion.button>
           </div>
 
-          {/* 右侧结果区 */}
-          <div className="col-span-12 lg:col-span-8 xl:col-span-9 flex flex-col gap-4 h-full">
-            <Card
-              title="结果输出（文本摘要）"
-              className="flex-1 min-h-[200px] overflow-auto"
-            >
+          {/* 右侧结果区（内部不滚动，Card 自适应高度） */}
+          <div className="col-span-12 lg:col-span-8 xl:col-span-9 flex flex-col gap-4">
+            <Card title="结果输出（文本摘要）">
               <AnimatePresence mode="wait">
                 {loading ? (
                   <motion.div
@@ -971,74 +1205,75 @@ export default function App() {
               </AnimatePresence>
             </Card>
 
-            <div className="grid grid-cols-12 gap-4 flex-1 min-h-[240px]">
-              <Card
-                title="结果输出（表格视图）"
-                className="col-span-12 xl:col-span-7 overflow-auto"
-              >
-                <table className="w-full text-sm">
-                  <thead className="sticky top-0 bg-white">
-                    <tr className="text-left border-b">
-                      <th className="py-2">方法</th>
-                      <th>置信度 c</th>
-                      <th>附加参数</th>
-                      <th>T1 VaR</th>
-                      <th>T2 VaR</th>
-                      <th>T3 VaR</th>
+            <Card title="结果输出（表格视图）">
+              <table className="w-full text-sm">
+                <thead className="bg-white">
+                  <tr className="text-left border-b">
+                    <th className="py-2">方法</th>
+                    <th>置信度 c</th>
+                    <th>附加参数</th>
+                    <th>{`T1 VaR (${T1}天)`}</th>
+                    <th>{`T2 VaR (${T2}天)`}</th>
+                    <th>{`T3 VaR (${T3}天)`}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {resultRows.map((r, i) => (
+                    <tr
+                      key={i}
+                      className="border-b last:border-0 hover:bg-slate-50 transition"
+                    >
+                      <td className="py-2">{r.method}</td>
+                      <td>{r.conf}</td>
+                      <td className="max-w-[260px] truncate" title={r.extra}>
+                        {r.extra}
+                      </td>
+                      <td>{r.v1}</td>
+                      <td>{r.v2}</td>
+                      <td>{r.v3}</td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {resultRows.map((r, i) => (
-                      <tr
-                        key={i}
-                        className="border-b last:border-0 hover:bg-slate-50 transition"
-                      >
-                        <td className="py-2">{r.method}</td>
-                        <td>{r.conf}</td>
-                        <td
-                          className="max-w-[260px] truncate"
-                          title={r.extra}
-                        >
-                          {r.extra}
-                        </td>
-                        <td>{r.v1}</td>
-                        <td>{r.v2}</td>
-                        <td>{r.v3}</td>
-                      </tr>
-                    ))}
-                    {!resultRows.length && (
-                      <tr>
-                        <td
-                          colSpan={6}
-                          className="py-8 text-center text-slate-500"
-                        >
-                          暂无结果
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </Card>
+                  ))}
+                  {!resultRows.length && (
+                    <tr>
+                      <td colSpan={6} className="py-8 text-center text-slate-500">
+                        暂无结果
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+              <div className="text-xs text-slate-500 mt-2">
+                表格仅展示 VaR 百分比（保留两位小数）。
+              </div>
+            </Card>
 
-              <Card
-                title="收益率序列（预览）"
-                className="col-span-12 xl:col-span-5"
-              >
-                <div className="h-[260px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={retSeries}>
-                      <XAxis dataKey="date" hide />
-                      <YAxis />
-                      <Tooltip />
-                      <Line dataKey="logRet" dot={false} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-                <div className="text-xs text-slate-500 mt-2">
-                  显示单品种或组合 log-return 序列。
-                </div>
-              </Card>
-            </div>
+            <Card title="行情走势图（价格）">
+              <div className="h-[360px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={priceSeries}>
+                    <XAxis dataKey="date" hide />
+                    <YAxis domain={["auto", "auto"]} />
+                    <Tooltip />
+                    <Legend />
+                    {priceSeriesIds.map((id, idx) => (
+                      <Line
+                        key={id}
+                        type="monotone"
+                        dataKey={id}
+                        dot={false}
+                        connectNulls={true}
+                        name={id}
+                        stroke={PALETTE[idx % PALETTE.length]}
+                        strokeWidth={2}
+                      />
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="text-xs text-slate-500 mt-2">
+                单品种显示单线；多品种按品种分线展示价格走势（0 值/缺失已前向填充）。
+              </div>
+            </Card>
           </div>
         </div>
       </div>
