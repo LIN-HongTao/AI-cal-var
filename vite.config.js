@@ -4,5 +4,5 @@ import react from '@vitejs/plugin-react'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
-  base: "/https://github.com/LIN-HongTao/AI-cal-var/",   // 关键：GitHub Pages 用
+  base: "/AI-cal-var/",   // 关键：GitHub Pages 用
 })
