@@ -1,0 +1,530 @@
+/* =============== 基础主题变量 =============== */
+:root {
+  --bg: #050816;
+  --bg-soft: #0b1020;
+  --shell: rgba(15, 23, 42, 0.88);
+  --card: rgba(15, 23, 42, 0.96);
+  --card-soft: rgba(15, 23, 42, 0.88);
+
+  --ink: #e5e7eb;
+  --ink-muted: #9ca3af;
+  --border: rgba(148, 163, 184, 0.35);
+
+  --accent: #38bdf8;
+  --accent-soft: rgba(56, 189, 248, 0.12);
+
+  --radius-lg: 18px;
+  --radius-md: 14px;
+  --radius-sm: 10px;
+
+  --shadow-soft: 0 18px 45px rgba(15, 23, 42, 0.75);
+  --shadow-subtle: 0 10px 30px rgba(15, 23, 42, 0.65);
+
+  --page-pad-x: clamp(16px, 3vw, 40px);
+  --page-pad-y: clamp(12px, 2vh, 24px);
+}
+
+/* =============== Reset =============== */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+}
+
+body {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text",
+    "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at 0% 0%, #0ea5e9 0, transparent 35%),
+    radial-gradient(circle at 100% 0%, #22c55e 0, transparent 35%),
+    radial-gradient(circle at 50% 100%, #6366f1 0, transparent 40%),
+    #020617;
+}
+
+/* =============== 页面骨架 =============== */
+
+.appRoot {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 顶部导航条 */
+.appHeader {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  backdrop-filter: blur(18px);
+  background: linear-gradient(
+    to bottom,
+    rgba(15, 23, 42, 0.92),
+    rgba(15, 23, 42, 0.86),
+    transparent
+  );
+  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.headerInner {
+  width: 100%;
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: 12px var(--page-pad-x);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+/* 左侧品牌区 */
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.brandLogo {
+  width: 40px;
+  height: 40px;
+  border-radius: 14px;
+  background: radial-gradient(circle at 30% 20%, #facc15, #f97316 45%, #1d4ed8);
+  display: grid;
+  place-items: center;
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: 0.6px;
+  color: #0b1020;
+  box-shadow: 0 10px 25px rgba(15, 23, 42, 0.8);
+}
+
+.brandTexts {
+  min-width: 0;
+}
+
+.brandTitle {
+  font-size: clamp(17px, 1.65vw, 19px);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.brandSubtitle {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--ink-muted);
+  opacity: 0.9;
+  max-width: min(520px, 65vw);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 右侧小提示 */
+.headerNote {
+  font-size: 12px;
+  color: var(--ink-muted);
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  background: radial-gradient(circle at 0 0, rgba(56, 189, 248, 0.16), transparent);
+}
+
+/* =============== 主内容布局 =============== */
+
+.appMain {
+  flex: 1;
+  width: 100%;
+  margin: 0 auto;
+  max-width: 1600px;
+  padding: var(--page-pad-y) var(--page-pad-x) 18px;
+  display: grid;
+  grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
+  gap: clamp(16px, 2.5vw, 26px);
+  align-items: flex-start;
+}
+
+/* 大屏稍微增加右侧比重 */
+@media (min-width: 1280px) {
+  .appMain {
+    grid-template-columns: minmax(340px, 430px) minmax(0, 1.4fr);
+  }
+}
+
+/* 平板：保持双列但更紧凑 */
+@media (max-width: 1040px) {
+  .appMain {
+    grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  }
+}
+
+/* 小屏：单列 */
+@media (max-width: 768px) {
+  .appMain {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 左右列内部布局 */
+.leftCol,
+.rightCol {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+/* =============== 卡片样式 =============== */
+
+.card {
+  position: relative;
+  border-radius: var(--radius-lg);
+  background: linear-gradient(
+      135deg,
+      rgba(248, 250, 252, 0.02),
+      rgba(15, 23, 42, 0.95)
+    ),
+    var(--card);
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  box-shadow: var(--shadow-soft);
+  padding: clamp(12px, 1.5vw, 18px);
+  overflow: hidden;
+}
+
+/* subtle 顶部高光线 */
+.card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    circle at 10% 0,
+    rgba(148, 163, 184, 0.35),
+    transparent 55%
+  );
+  opacity: 0.25;
+}
+
+/* 卡片标题 */
+.card h2 {
+  margin: 0 0 12px;
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #e5e7eb;
+}
+
+/* 卡片标题行 */
+.cardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+/* 文本等级 */
+label {
+  display: block;
+  margin-top: 9px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #e5e7eb;
+  letter-spacing: 0.02em;
+}
+
+.small {
+  font-size: 12px;
+  color: var(--ink-muted);
+  font-weight: 500;
+}
+
+.muted {
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+
+/* =============== 表单控件 =============== */
+
+.field {
+  margin-top: 4px;
+}
+
+.grid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.grid2 .span2 {
+  grid-column: span 2;
+}
+
+/* 小屏 grid 自动一列 */
+@media (max-width: 600px) {
+  .grid2 {
+    grid-template-columns: 1fr;
+  }
+  .grid2 .span2 {
+    grid-column: span 1;
+  }
+}
+
+input[type="text"],
+input[type="number"],
+select {
+  width: 100%;
+  margin-top: 6px;
+  padding: 8px 11px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  background: radial-gradient(circle at 0 0, rgba(148, 163, 184, 0.1), transparent),
+    rgba(15, 23, 42, 0.96);
+  color: var(--ink);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s;
+}
+
+input[type="file"] {
+  width: 100%;
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--ink-muted);
+}
+
+input:focus,
+select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.5);
+}
+
+/* checkbox 区域 */
+.checkboxList {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px dashed rgba(148, 163, 184, 0.5);
+  background: rgba(15, 23, 42, 0.85);
+  max-height: 170px;
+  overflow: auto;
+}
+
+.checkboxRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  padding: 4px 0;
+}
+
+/* 开关按钮 / segmented control */
+.segmented {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.segmented button {
+  position: relative;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.5);
+  background: rgba(15, 23, 42, 0.9);
+  color: var(--ink-muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.12s ease-out;
+}
+
+.segmented button.active {
+  color: #0b1020;
+  border-color: transparent;
+  background: linear-gradient(135deg, #22d3ee, #0ea5e9);
+  box-shadow: 0 10px 25px rgba(15, 23, 42, 0.7);
+}
+
+/* 纵向小栈 */
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* =============== 按钮 =============== */
+
+.primaryBtn {
+  width: 100%;
+  margin-top: 10px;
+  padding: 10px 14px;
+  border-radius: 999px;
+  border: none;
+  background: linear-gradient(135deg, #22d3ee, #0ea5e9);
+  color: #0b1020;
+  font-weight: 800;
+  font-size: 14px;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  box-shadow: 0 14px 35px rgba(15, 23, 42, 0.9);
+  transition: transform 0.06s ease-out, box-shadow 0.08s ease-out,
+    filter 0.08s ease-out, opacity 0.12s;
+}
+
+.primaryBtn:hover:not(:disabled) {
+  filter: brightness(1.03);
+  box-shadow: 0 18px 45px rgba(15, 23, 42, 0.95);
+}
+
+.primaryBtn:active:not(:disabled) {
+  transform: translateY(1px) scale(0.99);
+  box-shadow: 0 10px 25px rgba(15, 23, 42, 0.9);
+}
+
+.primaryBtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  filter: grayscale(0.2);
+}
+
+.ghostBtn {
+  padding: 8px 11px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.55);
+  background: rgba(15, 23, 42, 0.8);
+  color: var(--ink-muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.12s ease-out;
+}
+
+.ghostBtn:hover:not(:disabled) {
+  color: #e5e7eb;
+  border-color: rgba(148, 163, 184, 0.8);
+  background: rgba(15, 23, 42, 0.96);
+}
+
+.ghostBtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btnRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* =============== 输出区域（文字摘要） =============== */
+
+.outputText {
+  margin-top: 4px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: radial-gradient(circle at 0 0, rgba(56, 189, 248, 0.12), transparent),
+    rgba(15, 23, 42, 0.95);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  min-height: 180px;
+  max-height: 260px;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+}
+
+/* =============== 结果表格区域 =============== */
+
+.tableWrap {
+  margin-top: 4px;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(15, 23, 42, 0.96);
+  box-shadow: var(--shadow-subtle);
+  overflow: auto;
+}
+
+.resultTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  min-width: 760px; /* 宽屏下列更舒展，小屏靠横向滚动 */
+}
+
+.resultTable thead {
+  background: linear-gradient(to right, rgba(15, 23, 42, 0.98), #020617);
+}
+
+.resultTable th,
+.resultTable td {
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(30, 41, 59, 0.9);
+  text-align: left;
+  vertical-align: top;
+}
+
+.resultTable thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  font-size: 11px;
+  color: #cbd5f5;
+}
+
+.resultTable tbody tr:nth-child(even) {
+  background: rgba(15, 23, 42, 0.9);
+}
+
+.resultTable .nowrap {
+  white-space: nowrap;
+}
+
+/* 方法描述列：兼顾宽度与可换行 */
+.resultTable .minw {
+  min-width: 220px;
+  max-width: 420px;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.resultTable .empty {
+  text-align: center;
+  padding: 20px 12px;
+  color: var(--ink-muted);
+}
+
+/* 小屏：表格字体缩小一点 */
+@media (max-width: 600px) {
+  .resultTable {
+    font-size: 12px;
+    min-width: 640px;
+  }
+}
+
+/* =============== 页脚 =============== */
+
+.appFooter {
+  width: 100%;
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: 10px var(--page-pad-x) 18px;
+  font-size: 12px;
+  color: var(--ink-muted);
+  opacity: 0.85;
+}
