@@ -1,4 +1,5 @@
 import React, { useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import * as XLSX from "xlsx";
 import Papa from "papaparse";
 import { motion, AnimatePresence } from "framer-motion";
@@ -13,10 +14,11 @@ import {
 } from "recharts";
 import clsx from "clsx";
 
+import "katex/dist/katex.min.css";
+import { InlineMath, BlockMath } from "react-katex";
+
 import VarWorker from "./workers/varWorker?worker";
 import testData from "./data/testData.json";
-import { createPortal } from "react-dom";
-
 
 // ==================== 颜色调色板（多品种分色） ====================
 const PALETTE = [
@@ -25,48 +27,82 @@ const PALETTE = [
   "#e11d48", "#0ea5e9", "#84cc16", "#a855f7",
 ];
 
-// ==================== 帮助文案（来自说明文件口径） ====================
+// ==================== 帮助文案（支持 KaTeX：$...$ 行内、$$...$$ 块） ====================
 const HELP_TEXT = {
-  idCol: "品种/合约的唯一标识列，用于区分不同期货品种。多品种组合时按该列分组。",
-  dateCol: "交易日期列。多品种组合会按日期对齐，相关性与组合收益只使用对齐后的有效日期交集。",
-  priceCol: "结算价/收盘价列。先用该列计算日对数收益率 r_t = ln(S_t/S_{t-1})。",
+  idCol:
+    "品种/合约的唯一标识列，用于区分不同期货品种。多品种组合时按该列分组。",
+  dateCol:
+    "交易日期列。多品种组合会按日期对齐，相关性与组合收益只使用对齐后的有效日期交集。",
+  priceCol:
+    "结算价/收盘价列。先用该列计算日对数收益率：$$ r_t = \\ln\\left(\\frac{S_t}{S_{t-1}}\\right). $$",
 
-  conf1: "置信度 c1。VaR 定义为未来 T 天 PnL 分布左尾 (1-c) 分位点的损失绝对值。95% 对应正态分位 z=1.645。",
-  conf2: "置信度 c2。常用 99%（z=2.330），对应更极端的尾部风险。",
+  conf1:
+    "置信度 $c_1$。VaR 为未来 $T$ 天损失分布的左尾 $(1-c)$ 分位点（取损失绝对值）。\n" +
+    "$$ VaR_{c,T} = z_c \\cdot \\sigma \\cdot \\sqrt{T}. $$\n" +
+    "其中 $z_c$ 为标准正态分位（$c=0.95$ 时 $z=1.645$）。",
+  conf2:
+    "置信度 $c_2$。常用 $c=0.99$（$z=2.330$），对应更极端的尾部风险。",
 
-  T1: "持有期 T1（交易日）。单品种/组合 VaR 会按 √T 放大到 T 天口径。",
-  T2: "持有期 T2（交易日）。文中示例为 5 天。VaR_{c,T} = z_c · σ · √T。",
-  T3: "持有期 T3（交易日）。文中示例为 22 天（约 1 个月）。",
+  T1:
+    "持有期 $T_1$（交易日）。VaR 从 1 天放大到 $T$ 天口径：$$ VaR_{c,T}=VaR_{c,1}\\sqrt{T}. $$",
+  T2:
+    "持有期 $T_2$（交易日）。示例：5 天。正态参数法：$$ VaR_{c,T} = z_c\\,\\sigma\\sqrt{T}. $$",
+  T3:
+    "持有期 $T_3$（交易日）。示例：22 天（约 1 个月）。VaR 按 $\\sqrt{T}$ 放大。",
 
-  window: "正态参数法的波动率窗口。σ_t 采用滚动 55 日标准差；若样本不足 55 条，则用全样本标准差。",
+  window:
+    "正态参数法的波动率窗口。用最近窗口收益计算滚动波动率：\n" +
+    "$$ \\sigma_t = \\text{Std}(r_{t-w+1},\\dots,r_t). $$\n" +
+    "若样本不足窗口，则使用全样本标准差。",
 
   mcMethod:
-    "Monte Carlo 方法设置：\n" +
-    "• Normal：多元正态 i.i.d. 模型，用全样本均值 μ 与协方差 Σ 估计，按相关结构模拟路径。\n" +
-    "• t_auto：厚尾 t 分布 MC，自动拟合自由度 ν，更贴近期货尾部。\n" +
-    "• Bootstrap：历史收益重采样拼路径，减少强正态假设。",
+    "Monte Carlo 方法：\n" +
+    "• Normal：假设收益 $r\\sim\\mathcal N(\\mu,\\Sigma)$ 且 i.i.d.，按估计的相关结构模拟路径。\n" +
+    "• t_auto：厚尾 $t$ 分布 MC，自动拟合自由度 $\\nu$ 以刻画尾部。\n" +
+    "• Bootstrap：历史收益重采样拼路径，减少正态假设。",
 
   sims:
-    "模拟次数 K。每次生成 K 条未来 T 天收益路径，取左尾 (1-c) 分位作为 VaR。K 越大越稳健但更慢（示例 K=200,000）。",
+    "模拟次数 $K$。每次生成 $K$ 条未来 $T$ 天收益路径，取左尾分位作为 VaR。\n" +
+    "$$ VaR_{c,T} = - Q_{1-c}(R_T^{(1)},\\dots,R_T^{(K)}). $$\n" +
+    "$K$ 越大越稳健但更慢（示例 $K=200{,}000$）。",
 
   dfMax:
-    "t_auto 模式的自由度 ν 搜索上限。ν 越小尾部越厚；程序在 [2, dfMax] 内拟合最优 ν。",
+    "t_auto 模式的自由度上限 $\\nu_{\\max}$。$\\nu$ 越小尾部越厚；程序在 $[2,\\nu_{\\max}]$ 内拟合最优 $\\nu$。",
 
   mode:
     "计算模式：\n" +
-    "• 单品种：对一个期货品种计算 VaR。\n" +
-    "• 多品种组合：按日期对齐后估计相关性/协方差，再按权重计算组合 VaR。",
+    "• 单品种：对单一品种收益计算 VaR。\n" +
+    "• 多品种组合：按日期对齐后估计协方差/相关性，再按权重计算组合 VaR。",
 
   singleId: "单品种模式下选择的目标品种。",
 
   portfolioIds:
-    "多品种组合选取列表。组合 VaR 只对“对齐后有效交集日期”进行计算；交集太少会提示失败。",
+    "多品种组合选取列表。组合 VaR 只使用对齐后的有效交集日期；交集太少会提示失败。",
 
   weightsText:
-    "组合权重向量 w（权重和为 1）。默认等权；如需自定义，写成“品种=权重,品种=权重…”，程序会自动归一化。",
+    "组合权重向量 $w$（权重和为 1）。默认等权。\n" +
+    "组合波动率：$$ \\sigma_p=\\sqrt{w^\\top\\Sigma w}. $$\n" +
+    "自定义输入格式：“品种=权重,品种=权重…”，程序自动归一化。",
 };
 
-// ==================== 问号 hover 帮助组件 ====================
+// ==================== KaTeX 渲染器 ====================
+const renderTip = (tip) => {
+  const parts = String(tip)
+    .split(/(\$\$[\s\S]+?\$\$|\$[^$]+\$)/g)
+    .filter(Boolean);
+
+  return parts.map((p, i) => {
+    if (p.startsWith("$$") && p.endsWith("$$")) {
+      return <BlockMath key={i}>{p.slice(2, -2)}</BlockMath>;
+    }
+    if (p.startsWith("$") && p.endsWith("$")) {
+      return <InlineMath key={i}>{p.slice(1, -1)}</InlineMath>;
+    }
+    return <span key={i}>{p}</span>;
+  });
+};
+
+// ==================== Portal + 防越界 Help 组件 ====================
 const Help = ({ tip }) => {
   const iconRef = React.useRef(null);
   const [open, setOpen] = React.useState(false);
@@ -80,22 +116,18 @@ const Help = ({ tip }) => {
     const vw = window.innerWidth;
     const vh = window.innerHeight;
 
-    // 估计 tooltip 尺寸
-    const bubbleW = 280;
-    const bubbleH = 160;
+    const bubbleW = 300;
+    const bubbleH = 180;
     const padding = 8;
 
-    // 默认：下方居中
     let x = rect.left + rect.width / 2;
     let y = rect.bottom + 10;
     let place = "bottom";
 
-    // 水平 clamp，避免出屏
     const minX = padding + bubbleW / 2;
     const maxX = vw - padding - bubbleW / 2;
     x = Math.min(Math.max(x, minX), maxX);
 
-    // 垂直：下面放不下就翻到上面
     if (y + bubbleH > vh - padding) {
       y = rect.top - 10;
       place = "top";
@@ -141,7 +173,7 @@ const Help = ({ tip }) => {
       {open &&
         createPortal(
           <div
-            className="fixed z-[2147483647] w-[280px] max-w-[80vw]
+            className="fixed z-[2147483647] w-[300px] max-w-[85vw]
                        rounded-xl bg-slate-900 text-white text-xs leading-relaxed
                        px-3 py-2 shadow-2xl whitespace-pre-wrap
                        animate-in fade-in zoom-in-95"
@@ -154,8 +186,7 @@ const Help = ({ tip }) => {
                   : "translate(-50%, -100%)",
             }}
           >
-            {tip}
-
+            {renderTip(tip)}
             <div
               className="absolute left-1/2 -translate-x-1/2 w-2 h-2 bg-slate-900 rotate-45"
               style={pos.place === "bottom" ? { top: -4 } : { bottom: -4 }}
@@ -167,13 +198,10 @@ const Help = ({ tip }) => {
   );
 };
 
-
-
 // ==================== 计算函数（对齐你原 Py 逻辑） ====================
 function zFromConf(conf) {
   if (Math.abs(conf - 0.95) < 1e-6) return 1.645;
   if (Math.abs(conf - 0.99) < 1e-6) return 2.33;
-  // Moro approximation
   const a = [2.50662823884, -18.61500062529, 41.39119773534, -25.44106049637];
   const b = [-8.4735109309, 23.08336743743, -21.06224101826, 3.13082909833];
   const c = [
@@ -348,9 +376,7 @@ const Card = ({ title, children, className }) => (
       className
     )}
   >
-    {title && (
-      <div className="font-semibold text-slate-800 mb-3">{title}</div>
-    )}
+    {title && <div className="font-semibold text-slate-800 mb-3">{title}</div>}
     {children}
   </motion.div>
 );
@@ -382,11 +408,11 @@ export default function App() {
   const [T3, setT3] = useState(22);
   const [window, setWindow] = useState(66);
 
-  const [mcMethod, setMcMethod] = useState("normal"); // normal | t_auto | bootstrap
+  const [mcMethod, setMcMethod] = useState("normal");
   const [sims, setSims] = useState(200000);
   const [dfMax, setDfMax] = useState(60);
 
-  const [mode, setMode] = useState("single"); // single | portfolio
+  const [mode, setMode] = useState("single");
   const [singleId, setSingleId] = useState("");
   const [portfolioIds, setPortfolioIds] = useState([]);
   const [weightsText, setWeightsText] = useState("");
@@ -503,7 +529,6 @@ export default function App() {
     }
   }, [idsAll.join("|")]);
 
-  // ============ 权重解析 ============
   const parseWeights = (ids) => {
     if (!weightsText.trim()) {
       const w = 1 / ids.length;
@@ -827,7 +852,7 @@ export default function App() {
       {/* 主体：只在最外层允许滚动 */}
       <div className="max-w-[1600px] mx-auto h-[calc(100%-56px)] px-4 py-4 overflow-auto">
         <div className="grid grid-cols-12 gap-4">
-          {/* 左侧参数区（不单独滚动） */}
+          {/* 左侧参数区 */}
           <div className="col-span-12 lg:col-span-4 xl:col-span-3 space-y-3 pr-1">
             <Card title="1. 数据输入">
               <div className="text-sm text-slate-600">
@@ -1172,7 +1197,7 @@ export default function App() {
             </motion.button>
           </div>
 
-          {/* 右侧结果区（内部不滚动，Card 自适应高度） */}
+          {/* 右侧结果区 */}
           <div className="col-span-12 lg:col-span-8 xl:col-span-9 flex flex-col gap-4">
             <Card title="结果输出（文本摘要）">
               <AnimatePresence mode="wait">
