@@ -44,7 +44,7 @@ const USER_MANUAL_MD = `
 ---
 
 ## 1. 快速开始
-1. 点击 **读取 Excel/CSV** 导入数据，或点击 **加载测试数据**。
+1. 点击 **读取 Excel/CSV** 导入数据，或点击 **加载内置数据**。
 2. 在 **列映射** 中确认四列：
    - 合约细则ID（品种ID）
    - 合约名称（可选，图例/展示使用）
@@ -796,6 +796,10 @@ export default function App() {
   const [portfolioIds, setPortfolioIds] = useState([]);
   const [weightsText, setWeightsText] = useState("");
 
+  // 选择弹窗
+  const [selectorOpen, setSelectorOpen] = useState(false);
+  const [selectorSearch, setSelectorSearch] = useState("");
+
   const [showManual, setShowManual] = useState(false);
   const [openSection, setOpenSection] = useState("data");
 
@@ -879,6 +883,31 @@ export default function App() {
     setPriceCol(_price || cols[0] || "");
   };
 
+  // 统一数字解析：支持 "10,795.00" / " 10795 " / 数字本体
+  const toNumber = (v) => {
+    if (v == null) return NaN;
+    const s = String(v).trim().replace(/,/g, "");
+    if (!s) return NaN;
+    const n = Number(s);
+    return Number.isFinite(n) ? n : NaN;
+  };
+
+  const toDate = (v) => {
+    if (v == null) return new Date("invalid");
+    const s = String(v).trim();
+    // 兼容 2024/01/02 或 2024-01-02
+    if (/^\d{4}[/-]\d{1,2}[/-]\d{1,2}$/.test(s)) {
+      return new Date(s.replace(/\//g, "-"));
+    }
+    // 兼容 MM/DD/YY
+    if (/^\d{1,2}\/\d{1,2}\/\d{2}$/.test(s)) {
+      const [mm, dd, yy] = s.split("/").map(Number);
+      const yyyy = yy >= 70 ? 1900 + yy : 2000 + yy; // 常见金融数据规则
+      return new Date(yyyy, mm - 1, dd);
+    }
+    return new Date(s);
+  };
+
   // ============ 数据预处理（含名称映射） ============
   const { groupedAll, idsAll } = useMemo(() => {
     if (!rawRows.length || !idCol || !dateCol || !priceCol)
@@ -888,8 +917,8 @@ export default function App() {
       .map((r) => ({
         id: String(r[idCol]),
         name: nameCol ? String(r[nameCol] ?? "") : "",
-        date: new Date(r[dateCol]),
-        price: Number(r[priceCol]),
+        date: toDate(r[dateCol]),
+        price: toNumber(r[priceCol]),
       }))
       .filter(
         (r) =>
@@ -942,10 +971,14 @@ export default function App() {
 
   React.useEffect(() => {
     if (idsAll.length) {
+      // 单品种可以默认第一个（也可以改成 ""）
       setSingleId(idsAll[0]);
-      setPortfolioIds(idsAll);
+      // 多品种默认全不选
+      setPortfolioIds([]);
+      setWeightsText("");
     }
   }, [idsAll.join("|")]);
+
 
   const parseWeights = (ids) => {
     if (!weightsText.trim()) {
@@ -1090,7 +1123,15 @@ export default function App() {
 
     try {
       if (mode === "single") {
-        const cid = singleId;
+        // singleId 为空/失效时，兜底取第一个可用品种
+        const cid =
+          singleId && groupedAll[singleId]
+            ? singleId
+            : idsAll.find((id) => groupedAll[id]);
+
+        if (!cid || !groupedAll[cid]) {
+          throw new Error("单品种未选择或该品种无有效数据");
+        }
         const sub = groupedAll[cid];
         const rAll = sub.map((x) => x.logRet).filter(Number.isFinite);
 
@@ -1320,6 +1361,145 @@ export default function App() {
     }
   };
 
+  const SymbolSelectorModal = ({
+    open,
+    onClose,
+    mode,
+    ids,
+    idToName,
+    singleId,
+    setSingleId,
+    portfolioIds,
+    setPortfolioIds,
+  }) => {
+    if (!open) return null;
+
+    const q = selectorSearch.trim().toLowerCase();
+    const filtered = !q
+      ? ids
+      : ids.filter((id) => {
+          const name = (idToName[id] || "").toLowerCase();
+          return id.toLowerCase().includes(q) || name.includes(q);
+        });
+
+    const togglePortfolio = (id) => {
+      setPortfolioIds((prev) =>
+        prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+      );
+    };
+
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+        <div className="bg-white w-[92vw] max-w-3xl rounded-lg shadow-lg p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="text-lg font-semibold">
+              {mode === "single" ? "选择单品种" : "选择组合品种"}
+            </div>
+            <button
+              className="px-2 py-1 rounded bg-gray-100 hover:bg-gray-200"
+              onClick={onClose}
+            >
+              关闭
+            </button>
+          </div>
+
+          {/* 搜索框 */}
+          <input
+            value={selectorSearch}
+            onChange={(e) => setSelectorSearch(e.target.value)}
+            placeholder="搜索品种代码或名称…"
+            className="border rounded px-2 py-1 w-full"
+          />
+
+          {/* 多品种操作按钮 */}
+          {mode === "portfolio" && (
+            <div className="flex gap-2 text-sm">
+              <button
+                className="px-2 py-1 rounded bg-gray-100 hover:bg-gray-200"
+                onClick={() => setPortfolioIds([])}
+              >
+                全不选
+              </button>
+              <button
+                className="px-2 py-1 rounded bg-gray-100 hover:bg-gray-200"
+                onClick={() => setPortfolioIds(ids.slice())}
+              >
+                全选
+              </button>
+              <div className="text-gray-500 self-center">
+                已选 {portfolioIds.length} / {ids.length}
+              </div>
+            </div>
+          )}
+
+          {/* 列表 */}
+          <div className="border rounded p-2 max-h-[60vh] overflow-auto space-y-1">
+            {filtered.length === 0 && (
+              <div className="text-sm text-gray-500">没有匹配的品种</div>
+            )}
+
+            {mode === "single" &&
+              filtered.map((id) => {
+                const label = idToName[id]
+                  ? `${id}（${idToName[id]}）`
+                  : id;
+                const active = singleId === id;
+                return (
+                  <button
+                    key={id}
+                    className={clsx(
+                      "w-full text-left px-2 py-1 rounded hover:bg-gray-50",
+                      active && "bg-blue-50 border border-blue-200"
+                    )}
+                    onClick={() => {
+                      setSingleId(id);
+                      onClose();
+                    }}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+
+            {mode === "portfolio" &&
+              filtered.map((id) => {
+                const label = idToName[id]
+                  ? `${id}（${idToName[id]}）`
+                  : id;
+                const checked = portfolioIds.includes(id);
+                return (
+                  <label
+                    key={id}
+                    className="flex items-center gap-2 px-2 py-1 rounded hover:bg-gray-50 cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => togglePortfolio(id)}
+                    />
+                    <span>{label}</span>
+                  </label>
+                );
+              })}
+          </div>
+
+          {/* 底部 */}
+          <div className="flex justify-end gap-2">
+            {mode === "portfolio" && (
+              <button
+                className="px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"
+                onClick={onClose}
+              >
+                确认选择
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+
   // ==================== UI ====================
   return (
     <div className="h-full w-full bg-gradient-to-br from-slate-50 via-white to-slate-100 text-slate-900">
@@ -1362,7 +1542,7 @@ export default function App() {
               onClick={loadTestData}
               className="px-2.5 py-1.5 sm:px-3 sm:py-1.5 rounded-lg bg-white border shadow-sm text-xs sm:text-sm hover:bg-slate-50 active:scale-95 transition"
             >
-              加载测试数据
+              加载内置数据（截止2025-12-03）
             </button>
 
             {resultRows.length > 0 && (
@@ -1683,79 +1863,66 @@ export default function App() {
                 </div>
 
                 {mode === "single" && (
-                  <Field
-                    label={
-                      <span className="inline-flex items-center">
-                        单品种选择 <Help tip={HELP_TEXT.singleId} />
-                      </span>
-                    }
-                  >
-                    <select
-                      className="w-full border rounded-lg px-2 py-1"
-                      value={singleId}
-                      onChange={(e) => setSingleId(e.target.value)}
+                  <div className="flex items-center gap-2 text-sm flex-wrap">
+                    <button
+                      className="px-3 py-1 rounded bg-gray-200 hover:bg-gray-300"
+                      onClick={() => setSelectorOpen(true)}
+                      disabled={!idsAll.length}
                     >
-                      {idsAll.map((id) => (
-                        <option key={id}>
-                          {idToName[id] ? `${id}（${idToName[id]}）` : id}
-                        </option>
-                      ))}
-                    </select>
-                  </Field>
+                      选择品种
+                    </button>
+
+                    <div className="text-gray-700">
+                      当前：
+                      {singleId
+                        ? idToName[singleId]
+                          ? `${singleId}（${idToName[singleId]}）`
+                          : singleId
+                        : "未选择（计算时自动取第一个有效品种）"}
+                    </div>
+                  </div>
                 )}
+
 
                 {mode === "portfolio" && (
-                  <>
-                    <div className="text-sm text-slate-600 inline-flex items-center">
-                      勾选参与组合品种：
-                      <Help tip={HELP_TEXT.portfolioIds} />
+                  <div className="space-y-2 text-sm">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        className="px-3 py-1 rounded bg-gray-200 hover:bg-gray-300"
+                        onClick={() => setSelectorOpen(true)}
+                        disabled={!idsAll.length}
+                      >
+                        选择品种（可搜索）
+                      </button>
+
+                      <button
+                        className="px-3 py-1 rounded bg-gray-100 hover:bg-gray-200"
+                        onClick={() => setPortfolioIds([])}
+                      >
+                        全不选
+                      </button>
+
+                      <div className="text-gray-600">
+                        已选 {portfolioIds.length} 个：
+                        {portfolioIds.length
+                          ? portfolioIds.slice(0, 6).join(", ") +
+                            (portfolioIds.length > 6 ? " ..." : "")
+                          : "无"}
+                      </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-2 max-h-40 overflow-auto border rounded-lg p-2 bg-white">
-                      {idsAll.map((id) => {
-                        const checked = portfolioIds.includes(id);
-                        return (
-                          <label
-                            key={id}
-                            className="flex items-center gap-2 text-sm"
-                          >
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={() => {
-                                setPortfolioIds((prev) =>
-                                  checked
-                                    ? prev.filter((x) => x !== id)
-                                    : [...prev, id]
-                                );
-                              }}
-                            />
-                            <span>
-                              {id}
-                              {idToName[id] ? `（${idToName[id]}）` : ""}
-                            </span>
-                          </label>
-                        );
-                      })}
-                    </div>
-
-                    <Field
-                      label={
-                        <span className="inline-flex items-center">
-                          组合权重（可选） <Help tip={HELP_TEXT.weightsText} />
-                        </span>
-                      }
-                    >
+                    <label className="block">
+                      权重(可空，空则等权，各品种用空格/逗号分隔):
                       <input
-                        type="text"
-                        placeholder="CFI=0.7,RBFI=0.3"
-                        className="w-full border rounded-lg px-2 py-1"
                         value={weightsText}
                         onChange={(e) => setWeightsText(e.target.value)}
+                        className="border rounded px-2 py-1 w-full"
+                        placeholder="例如：0.2, 0.3, 0.5"
                       />
-                    </Field>
-                  </>
+                    </label>
+                  </div>
                 )}
+
               </div>
             </SectionCard>
 
@@ -1987,6 +2154,17 @@ export default function App() {
           </motion.div>
         )}
       </AnimatePresence>
+    <SymbolSelectorModal
+      open={selectorOpen}
+      onClose={() => setSelectorOpen(false)}
+      mode={mode}
+      ids={idsAll}
+      idToName={idToName}
+      singleId={singleId}
+      setSingleId={setSingleId}
+      portfolioIds={portfolioIds}
+      setPortfolioIds={setPortfolioIds}
+    />
     </div>
   );
 }
