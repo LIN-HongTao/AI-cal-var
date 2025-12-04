@@ -2,7 +2,8 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [react()],
-  base: "/AI-cal-var/",   // 关键：GitHub Pages 用
-})
+  base: mode === "github" ? "/AI-cal-var/" : "/",
+}));
+

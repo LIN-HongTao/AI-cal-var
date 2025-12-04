@@ -74,13 +74,37 @@ function randn(){
   while(v===0)v=Math.random();
   return Math.sqrt(-2.0*Math.log(u))*Math.cos(2.0*Math.PI*v);
 }
-function randStdT(df){
-  // 用正态/卡方构造
-  let z=randn();
-  let chi=0;
-  for(let i=0;i<df;i++){ const u=randn(); chi+=u*u; }
-  return z/Math.sqrt(chi/df);
+// Marsaglia-Tsang Gamma sampler
+function randGamma(k){
+  if (k < 1){
+    // boost for k<1
+    const u = Math.random();
+    return randGamma(1+k) * Math.pow(u, 1/k);
+  }
+  const d = k - 1/3;
+  const c = 1/Math.sqrt(9*d);
+  while (true){
+    let x = randn();
+    let v = 1 + c*x;
+    if (v <= 0) continue;
+    v = v*v*v;
+    const u = Math.random();
+    if (u < 1 - 0.0331*(x*x)*(x*x)) return d*v;
+    if (Math.log(u) < 0.5*x*x + d*(1 - v + Math.log(v))) return d*v;
+  }
 }
+
+function randChiSquare(df){
+  // Chi-square(df) = 2*Gamma(df/2)
+  return 2 * randGamma(df/2);
+}
+
+function randStdT(df){
+  const z = randn();
+  const chi2 = randChiSquare(df);
+  return z / Math.sqrt(chi2/df);
+}
+
 
 // quantile
 function quantile(arr, q){
@@ -118,7 +142,7 @@ self.onmessage = (e)=>{
       return;
     }
 
-    if(method==="t_auto"){
+    if(method==="t_mc"){
       const dfHat=fitTDfMLE(r,3,dfMax);
       const scale = dfHat>2 ? sigma*Math.sqrt((dfHat-2)/dfHat) : sigma;
       const Rs=new Float64Array(sims);
@@ -128,7 +152,7 @@ self.onmessage = (e)=>{
         Rs[k]=sum;
       }
       const v = -quantile(Rs, ztail);
-      self.postMessage({ok:true, var:v, mu, sigma, dfHat});
+      self.postMessage({ok:true, var:v, mu, sigma, nu: dfHat, z: zFromConf(conf)});
       return;
     }
 
