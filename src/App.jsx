@@ -14,15 +14,16 @@ import {
 } from "recharts";
 import clsx from "clsx";
 
-import jsPDF from "jspdf";
-import html2canvas from "html2canvas";
-
 import "katex/dist/katex.css";
 import { InlineMath, BlockMath } from "react-katex";
 
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
+
+// PDF export (manual)
+import jsPDF from "jspdf";
+import html2canvas from "html2canvas";
 
 import VarWorker from "./workers/varWorker?worker";
 import testData from "./data/testData.json";
@@ -36,7 +37,7 @@ const PALETTE = [
 
 // ==================== 用户手册 Markdown（完整口径说明） ====================
 const USER_MANUAL_MD = `
-# 期货 VaR 计算器（Web）用户手册
+# 万能 VaR 计算器用户手册
 
 本工具用于单品种或多品种期货组合在不同方法下的 VaR（Value-at-Risk）估计，并给出价格走势图与详细的参数/口径说明。
 
@@ -184,31 +185,140 @@ $$
 r_t^{(k)} \\leftarrow \\mathrm{sample}(\\{r_{t-w+1},\\dots,r_t\\})
 $$
 
-**优点**：最少假设，能保留偏度/峰度/尾部形态  
-**缺点**：尾部是否可靠取决于近期样本中是否包含极端日  
-**场景**：不希望做分布假设；或用来验证 Normal/t-MC 结果。
+---
+
+## 6. 各方法适用场景与优劣对比
+
+### 6.1 正态参数法（Normal / Parametric VaR）
+**核心假设**：收益率近似正态 i.i.d.，风险完全由近期波动率 $\\sigma$ 决定。  
+**口径**：最近 $w$ 天估计 $\\sigma_{\\text{latest}}$，再乘 $z$ 与 $\\sqrt{T}$。
+
+**适用场景**
+- **日常风险监控 / 常态市场**：价格波动稳定、极端跳跃少。
+- **样本不长但希望快速出结果**：只依赖 $w$ 天波动率。
+- **主要关心“近期波动是否上升”**：风控阈值、保证金预警。
+
+**优点**
+- 速度最快、稳定、解释性最强（$z\\sigma\\sqrt{T}$）。
+- 对 $w$ 变化敏感，能快速反映近期风险升温。
+
+**缺点**
+- 对厚尾/偏度不敏感，极端行情下可能低估尾部风险。
+- 无法体现收益分布形状变化。
 
 ---
 
-## 6. 结果解读
+### 6.2 Normal MC（正态 Monte Carlo）
+**核心假设**：收益正态 i.i.d.；用模拟代替闭式公式。  
+**口径**：最近 $w$ 天估 $\\mu_w,\\sigma_w$ 后模拟未来路径。
+
+**适用场景**
+- **希望保留均值 $\mu$ 的影响**（品种有趋势或漂移时）。
+- **需要路径级结果**（未来可能加入止损/触发规则等）。
+- **作为正态参数法的验证**：同口径下两者应非常接近。
+
+**优点**
+- 与参数法同假设下结果一致，但扩展性更强。
+- 易升级到更复杂的路径/组合结构。
+
+**缺点**
+- 尾部仍是正态，极端风险低估问题依旧存在。
+- 计算慢于参数法（但实现已做 worker 并行）。
+
+---
+
+### 6.3 t-MC（厚尾 t 分布 MC）
+**核心假设**：收益服从 t 分布，允许厚尾；$\\nu$ 自动拟合。  
+**口径**：最近 $w$ 天拟合 $\\mu_w,\\sigma_w,\\nu_w$ 后模拟。
+
+**适用场景**
+- **明显厚尾或跳跃品种**（黑色/化工/高波动品种等）。
+- **危机/波动聚集阶段**：$\\nu$ 会显著变小，VaR 更保守。
+- **你要对极端损失更敏感**（压力测试、保守风控口径）。
+
+**优点**
+- 能显式刻画尾部厚度（$\\nu$），比正态更贴近大量期货收益特征。
+- $\nu$ 本身可被视为风险状态指标。
+
+**缺点**
+- 拟合依赖样本量；$w$ 太短不稳、太长不敏感。
+- 计算量最大。
+
+---
+
+### 6.4 Bootstrap MC（历史重采样）
+**核心假设**：不作分布假设；未来收益来自近期历史的重抽样。  
+**口径**：从最近 $w$ 天收益池重采样拼接路径。
+
+**适用场景**
+- **不信任何参数分布假设**（偏度/峰度/尾部结构复杂）。
+- **希望最大程度保留真实分布形状**（跳跃、偏度、厚尾等）。
+- **作为分布假设方法的对照组**：校验 Normal/t-MC 假设偏差。
+
+**优点**
+- 最少假设，完全“历史驱动”。
+- 对偏度、肥尾、离群点非常敏感（若样本中存在）。
+
+**缺点**
+- 尾部可靠性取决于 $w$ 内是否出现极端日：  
+  若样本缺少极端事件，Bootstrap 可能低估尾部。
+- 无外推能力（不会产生历史未出现的极端值）。
+
+---
+
+### 6.5 如何公平对比这些方法？
+当前版本已统一口径（MC 也用最近 $w$ 天），因此可直接横向对比：
+
+- **正态参数法 ≈ Normal MC**  
+  同 $w$ + 同正态假设 → 两者应高度一致（差异来自 MC 采样误差/是否带 $\\mu$）。
+
+- **t-MC 通常 ≥ Normal MC**  
+  若显著更大 → 厚尾/极端风险提升；  
+  若接近 → 近期分布接近正态（$\\nu$ 拟合会偏大）。
+
+- **Bootstrap 取决于 $w$ 内极端日是否出现**  
+  Bootstrap 大而 Normal/t-MC 小 → 最近确实发生极端事件；  
+  Bootstrap 小而 t-MC 大 → 历史未出现极端日，但形状提示厚尾。
+
+---
+
+### 6.6 选法小抄（给用户的快速建议）
+- **日常监控 / 常态行情**：  
+  ✅ 正态参数法（最快）  
+  ✅ Normal MC（若你希望保留路径/μ）
+
+- **高波动 / 跳跃 / 危机阶段**：  
+  ✅ t-MC（主口径）  
+  ➕ Bootstrap（对照：极端日是否真实发生）
+
+- **完全历史驱动 / 不做假设**：  
+  ✅ Bootstrap MC  
+  ➕ t-MC（厚尾外推对照）
+
+- **风控口径要保守**：  
+  ✅ t-MC + Bootstrap  
+  正态类作为下限参考
+
+---
+
+## 7. 结果解读
 - **VaR%** 表示未来 $T$ 天在置信度 $c$ 下的最大预期损失比例。
 - 当 Normal MC 和 正态参数法同口径（最近 $w$ 天 + 正态）时，两者应非常接近；差异主要来自 MC 采样误差或均值项。
 - 若 t-MC 明显大于 Normal MC，说明近期收益尾部更厚、极端风险更显著。
 
 ---
 
-## 7. 常见问题
+## 8. 常见问题
 **Q1：组合提示对齐日期太少？**  
 A：参与品种交易日交集太少，请减少品种或换重叠更多的品种。
 
-**Q2：t-MC 拟合的 $\\nu$ 很小？**  
+**Q2：t-MC 拟合的 $\nu$ 很小？**  
 A：近期极端波动显著、尾厚。可结合 Bootstrap 验证。
 
 **Q3：MC 结果不够稳定？**  
 A：提高模拟次数 $K$（如 200k→500k）或适当增大 $w$。
 
 `;
-
 
 // ==================== 帮助文案（逐参完整解释） ====================
 const HELP_TEXT = {
@@ -265,7 +375,7 @@ const HELP_TEXT = {
 // ==================== KaTeX 渲染器 ====================
 const renderTip = (tip) => {
   const parts = String(tip)
-    .split(/(\$\$[\s\S]+?\$\$|\$[^$]+\$)/g)
+    .split(/(\\$\\$[\\s\\S]+?\\$\\$|\\$[^$]+\\$)/g)
     .filter(Boolean);
 
   return parts.map((p, i) => {
@@ -294,7 +404,7 @@ const Help = ({ tip }) => {
     const vh = window.innerHeight;
 
     const bubbleW = 320;
-    const bubbleH = 200;
+    const bubbleH = 220;
     const padding = 8;
 
     let x = rect.left + rect.width / 2;
@@ -570,6 +680,37 @@ const Card = ({ title, children, className }) => (
   </motion.div>
 );
 
+const SectionCard = ({ id, title, openSection, setOpenSection, children }) => {
+  const isOpen = openSection === id;
+  return (
+    <Card
+      title={
+        <button
+          type="button"
+          onClick={() => setOpenSection(isOpen ? "" : id)}
+          className="w-full flex items-center justify-between text-left"
+        >
+          <span>{title}</span>
+          <span className="lg:hidden text-slate-400">
+            {isOpen ? "收起" : "展开"}
+          </span>
+        </button>
+      }
+      className="p-0"
+    >
+      <div
+        className={clsx(
+          "px-4 pb-4",
+          "lg:block",
+          isOpen ? "block" : "hidden"
+        )}
+      >
+        {children}
+      </div>
+    </Card>
+  );
+};
+
 const Field = ({ label, children }) => (
   <label className="grid grid-cols-1 sm:grid-cols-2 items-center gap-2 sm:gap-3 text-sm">
     <span className="text-slate-600">{label}</span>
@@ -577,7 +718,7 @@ const Field = ({ label, children }) => (
   </label>
 );
 
-// ==================== 进度遮罩（前端锁屏 + 好看进度条） ====================
+// ==================== 进度遮罩 ====================
 const ProgressOverlay = ({ open, text = "计算中…" }) => {
   if (!open) return null;
   return createPortal(
@@ -589,7 +730,7 @@ const ProgressOverlay = ({ open, text = "计算中…" }) => {
         exit={{ opacity: 0 }}
       >
         <motion.div
-          className="w-full max-w-md rounded-2xl bg-white shadow-2xl border border-slate-200 p-6"
+          className="w-full max-w-[92vw] sm:max-w-md rounded-2xl bg-white shadow-2xl border border-slate-200 p-6"
           initial={{ scale: 0.96, opacity: 0, y: 8 }}
           animate={{ scale: 1, opacity: 1, y: 0 }}
           exit={{ scale: 0.96, opacity: 0, y: 8 }}
@@ -625,9 +766,10 @@ const ProgressOverlay = ({ open, text = "计算中…" }) => {
 // ==================== 主 App ====================
 export default function App() {
   const workerRef = useRef(null);
-  const manualBodyRef = useRef(null);
-
   if (!workerRef.current) workerRef.current = new VarWorker();
+
+  const chartRef = useRef(null);
+  const manualBodyRef = useRef(null);
 
   const [rawRows, setRawRows] = useState([]);
   const [columns, setColumns] = useState([]);
@@ -643,7 +785,7 @@ export default function App() {
   const [T1, setT1] = useState(1);
   const [T2, setT2] = useState(5);
   const [T3, setT3] = useState(22);
-  const [window, setWindow] = useState(55); // ✅ 共用参数里
+  const [window, setWindow] = useState(55);
 
   const [mcMethod, setMcMethod] = useState("normal"); // normal | t_mc | bootstrap
   const [sims, setSims] = useState(200000);
@@ -655,6 +797,7 @@ export default function App() {
   const [weightsText, setWeightsText] = useState("");
 
   const [showManual, setShowManual] = useState(false);
+  const [openSection, setOpenSection] = useState("data");
 
   const [loading, setLoading] = useState(false);
   const [progressText, setProgressText] = useState("");
@@ -692,64 +835,6 @@ export default function App() {
     XLSX.utils.book_append_sheet(wb, ws, "模板");
     XLSX.writeFile(wb, "VaR标准数据模板.xlsx");
   };
-
-  const downloadManualPDF = async () => {
-    try {
-      const el = manualBodyRef.current;
-      if (!el) {
-        alert("未找到手册正文区域，请先打开用户手册后再下载。");
-        return;
-      }
-
-      // 临时把滚动条展开成完整高度，避免只截到可视区域
-      const prevHeight = el.style.height;
-      const prevOverflow = el.style.overflow;
-      el.style.height = "auto";
-      el.style.overflow = "visible";
-
-      const canvas = await html2canvas(el, {
-        scale: 2,
-        useCORS: true,
-        backgroundColor: "#ffffff",
-        windowWidth: el.scrollWidth,
-        windowHeight: el.scrollHeight,
-      });
-
-      // 恢复样式
-      el.style.height = prevHeight;
-      el.style.overflow = prevOverflow;
-
-      const imgData = canvas.toDataURL("image/png");
-      const pdf = new jsPDF("p", "mm", "a4");
-
-      const pageW = pdf.internal.pageSize.getWidth();
-      const pageH = pdf.internal.pageSize.getHeight();
-
-      // 图片按页高切分页
-      const imgW = pageW;
-      const imgH = (canvas.height * imgW) / canvas.width;
-
-      let y = 0;
-      let leftH = imgH;
-
-      pdf.addImage(imgData, "PNG", 0, y, imgW, imgH);
-      leftH -= pageH;
-
-      while (leftH > 0) {
-        pdf.addPage();
-        y = - (imgH - leftH);
-        pdf.addImage(imgData, "PNG", 0, y, imgW, imgH);
-        leftH -= pageH;
-      }
-
-      pdf.save("VaR用户手册.pdf");
-    } catch (e) {
-      console.error(e);
-      alert("PDF 导出失败：" + e.message);
-    }
-  };
-
-
 
   // ============ 文件读取 ============
   const onFile = async (file) => {
@@ -891,6 +976,82 @@ export default function App() {
   const fmtPct2 = (v) =>
     Number.isFinite(v) ? `${(v * 100).toFixed(2)}%` : "—";
 
+  // ============ 导出结果（Excel 内含摘要 / 表格 / 价格数据 / 走势图） ============
+  const exportResults = () => {
+    const wb = XLSX.utils.book_new();
+
+    // Summary
+    const summaryLines = (summary || "")
+      .split("\n")
+      .map((line) => ({ Summary: line }));
+    const wsSummary = XLSX.utils.json_to_sheet(summaryLines);
+    XLSX.utils.book_append_sheet(wb, wsSummary, "Summary");
+
+    // VaR Table
+    const wsTable = XLSX.utils.json_to_sheet(resultRows || []);
+    XLSX.utils.book_append_sheet(wb, wsTable, "VaR Table");
+
+    // Prices
+    const wsPrices = XLSX.utils.json_to_sheet(priceSeries || []);
+    XLSX.utils.book_append_sheet(wb, wsPrices, "Prices(last w days)");
+
+    XLSX.writeFile(wb, "VaR_results_with_summary_prices.xlsx");
+  };
+
+  // ============ 用户手册下载 PDF（页面内一键） ============
+  const downloadManualPDF = async () => {
+    try {
+      const el = manualBodyRef.current;
+      if (!el) {
+        alert("未找到手册正文区域，请先打开用户手册后再下载。");
+        return;
+      }
+
+      const prevHeight = el.style.height;
+      const prevOverflow = el.style.overflow;
+      el.style.height = "auto";
+      el.style.overflow = "visible";
+
+      const canvas = await html2canvas(el, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: "#ffffff",
+        windowWidth: el.scrollWidth,
+        windowHeight: el.scrollHeight,
+      });
+
+      el.style.height = prevHeight;
+      el.style.overflow = prevOverflow;
+
+      const imgData = canvas.toDataURL("image/png");
+      const pdf = new jsPDF("p", "mm", "a4");
+
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+
+      const imgW = pageW;
+      const imgH = (canvas.height * imgW) / canvas.width;
+
+      let y = 0;
+      let leftH = imgH;
+
+      pdf.addImage(imgData, "PNG", 0, y, imgW, imgH);
+      leftH -= pageH;
+
+      while (leftH > 0) {
+        pdf.addPage();
+        y = -(imgH - leftH);
+        pdf.addImage(imgData, "PNG", 0, y, imgW, imgH);
+        leftH -= pageH;
+      }
+
+      pdf.save("VaR用户手册.pdf");
+    } catch (e) {
+      console.error(e);
+      alert("PDF 导出失败：" + e.message);
+    }
+  };
+
   // ============ 计算入口 ============
   const runCalc = async () => {
     if (!idsAll.length) return;
@@ -907,6 +1068,7 @@ export default function App() {
 
     let lines = [];
     let rows = [];
+    lines.push(`========== 计算结果 ==========\n`);
     lines.push(
       `共用参数： c1=${conf1.toFixed(3)}, c2=${conf2.toFixed(
         3
@@ -1159,29 +1321,6 @@ export default function App() {
     }
   };
 
-  const exportResults = () => {
-    // ===== 1) Excel：Summary + Table + Prices =====
-    const wb = XLSX.utils.book_new();
-
-    // Summary Sheet（按行写入）
-    const summaryLines = (summary || "")
-      .split("\n")
-      .map((line) => ({ Summary: line }));
-    const wsSummary = XLSX.utils.json_to_sheet(summaryLines);
-    XLSX.utils.book_append_sheet(wb, wsSummary, "Summary");
-
-    // VaR Table Sheet
-    const wsTable = XLSX.utils.json_to_sheet(resultRows || []);
-    XLSX.utils.book_append_sheet(wb, wsTable, "VaR Table");
-
-    // Prices Sheet（最近 w 天，等同于图表数据）
-    const wsPrices = XLSX.utils.json_to_sheet(priceSeries || []);
-    XLSX.utils.book_append_sheet(wb, wsPrices, "Prices(last w days)");
-
-    XLSX.writeFile(wb, "VaR_results_with_summary_prices.xlsx");
-  };
-
-
   // ==================== UI ====================
   return (
     <div className="h-full w-full bg-gradient-to-br from-slate-50 via-white to-slate-100 text-slate-900">
@@ -1189,12 +1328,12 @@ export default function App() {
       <div className="sticky top-0 z-10 bg-white/70 backdrop-blur border-b border-slate-200">
         <div className="max-w-[1600px] mx-auto px-4 py-3 flex flex-wrap items-center gap-2 sm:gap-3">
           <div className="text-lg font-bold tracking-tight">
-            期货 VaR 计算器（Web）
+            万能 VaR 计算器
           </div>
 
           <button
             onClick={() => setShowManual(true)}
-            className="px-3 py-1.5 rounded-lg bg-white border shadow-sm text-sm hover:bg-slate-50 active:scale-95 transition"
+            className="px-2.5 py-1.5 sm:px-3 sm:py-1.5 rounded-lg bg-white border shadow-sm text-xs sm:text-sm hover:bg-slate-50 active:scale-95 transition"
           >
             用户手册
           </button>
@@ -1202,13 +1341,13 @@ export default function App() {
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <button
               onClick={downloadTemplate}
-              className="px-3 py-1.5 rounded-lg bg-white border shadow-sm text-sm hover:bg-slate-50 active:scale-95 transition"
+              className="px-2.5 py-1.5 sm:px-3 sm:py-1.5 rounded-lg bg-white border shadow-sm text-xs sm:text-sm hover:bg-slate-50 active:scale-95 transition"
               title="下载标准数据模板"
             >
               下载标准数据模板
             </button>
 
-            <label className="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-sm cursor-pointer hover:opacity-90 active:scale-95 transition">
+            <label className="px-2.5 py-1.5 sm:px-3 sm:py-1.5 rounded-lg bg-slate-900 text-white text-xs sm:text-sm cursor-pointer hover:opacity-90 active:scale-95 transition">
               读取 Excel/CSV
               <input
                 type="file"
@@ -1222,7 +1361,7 @@ export default function App() {
 
             <button
               onClick={loadTestData}
-              className="px-3 py-1.5 rounded-lg bg-white border shadow-sm text-sm hover:bg-slate-50 active:scale-95 transition"
+              className="px-2.5 py-1.5 sm:px-3 sm:py-1.5 rounded-lg bg-white border shadow-sm text-xs sm:text-sm hover:bg-slate-50 active:scale-95 transition"
             >
               加载测试数据
             </button>
@@ -1230,7 +1369,7 @@ export default function App() {
             {resultRows.length > 0 && (
               <button
                 onClick={exportResults}
-                className="px-3 py-1.5 rounded-lg bg-white border shadow-sm text-sm hover:bg-slate-50 active:scale-95 transition"
+                className="px-2.5 py-1.5 sm:px-3 sm:py-1.5 rounded-lg bg-white border shadow-sm text-xs sm:text-sm hover:bg-slate-50 active:scale-95 transition"
               >
                 导出结果
               </button>
@@ -1242,17 +1381,33 @@ export default function App() {
       {/* 主体：只在最外层允许滚动 */}
       <div className="max-w-[1600px] mx-auto h-[calc(100%-56px)] px-4 py-4 overflow-auto">
         <div className="grid grid-cols-12 gap-4">
-          {/* 左侧参数区 */}
-          <div className="col-span-12 lg:col-span-4 xl:col-span-3 space-y-3 pr-1">
-            <Card title="1. 数据输入">
+          {/* 参数区 */}
+          <div className="col-span-12 lg:col-span-4 xl:col-span-3 space-y-3 pr-0 lg:pr-1">
+            <SectionCard
+              id="data"
+              title="1. 数据输入"
+              openSection={openSection}
+              setOpenSection={setOpenSection}
+            >
               <div className="text-sm text-slate-600">
                 {fileName || "未选择文件"}
               </div>
-            </Card>
+            </SectionCard>
 
-            <Card title="2. 列映射（自动识别，可手动修改）">
+            <SectionCard
+              id="cols"
+              title="2. 列映射（自动识别，可手动修改）"
+              openSection={openSection}
+              setOpenSection={setOpenSection}
+            >
               <div className="space-y-2">
-                <Field label={<span className="inline-flex items-center">品种ID列 <Help tip={HELP_TEXT.idCol} /></span>}>
+                <Field
+                  label={
+                    <span className="inline-flex items-center">
+                      品种ID列 <Help tip={HELP_TEXT.idCol} />
+                    </span>
+                  }
+                >
                   <select
                     className="w-full border rounded-lg px-2 py-1"
                     value={idCol}
@@ -1264,7 +1419,13 @@ export default function App() {
                   </select>
                 </Field>
 
-                <Field label={<span className="inline-flex items-center">合约名称列（可选） <Help tip={HELP_TEXT.nameCol} /></span>}>
+                <Field
+                  label={
+                    <span className="inline-flex items-center">
+                      合约名称列（可选） <Help tip={HELP_TEXT.nameCol} />
+                    </span>
+                  }
+                >
                   <select
                     className="w-full border rounded-lg px-2 py-1"
                     value={nameCol}
@@ -1277,7 +1438,13 @@ export default function App() {
                   </select>
                 </Field>
 
-                <Field label={<span className="inline-flex items-center">日期列 <Help tip={HELP_TEXT.dateCol} /></span>}>
+                <Field
+                  label={
+                    <span className="inline-flex items-center">
+                      日期列 <Help tip={HELP_TEXT.dateCol} />
+                    </span>
+                  }
+                >
                   <select
                     className="w-full border rounded-lg px-2 py-1"
                     value={dateCol}
@@ -1289,7 +1456,13 @@ export default function App() {
                   </select>
                 </Field>
 
-                <Field label={<span className="inline-flex items-center">结算价列 <Help tip={HELP_TEXT.priceCol} /></span>}>
+                <Field
+                  label={
+                    <span className="inline-flex items-center">
+                      结算价列 <Help tip={HELP_TEXT.priceCol} />
+                    </span>
+                  }
+                >
                   <select
                     className="w-full border rounded-lg px-2 py-1"
                     value={priceCol}
@@ -1301,12 +1474,22 @@ export default function App() {
                   </select>
                 </Field>
               </div>
-            </Card>
+            </SectionCard>
 
-            {/* ✅ 共用参数里包含 σ 窗口 */}
-            <Card title="3. 共用参数">
+            <SectionCard
+              id="common"
+              title="3. 共用参数"
+              openSection={openSection}
+              setOpenSection={setOpenSection}
+            >
               <div className="space-y-2">
-                <Field label={<span className="inline-flex items-center">置信度 c1 <Help tip={HELP_TEXT.conf1} /></span>}>
+                <Field
+                  label={
+                    <span className="inline-flex items-center">
+                      置信度 c1 <Help tip={HELP_TEXT.conf1} />
+                    </span>
+                  }
+                >
                   <input
                     type="number"
                     step="0.001"
@@ -1318,7 +1501,13 @@ export default function App() {
                   />
                 </Field>
 
-                <Field label={<span className="inline-flex items-center">置信度 c2 <Help tip={HELP_TEXT.conf2} /></span>}>
+                <Field
+                  label={
+                    <span className="inline-flex items-center">
+                      置信度 c2 <Help tip={HELP_TEXT.conf2} />
+                    </span>
+                  }
+                >
                   <input
                     type="number"
                     step="0.001"
@@ -1330,7 +1519,13 @@ export default function App() {
                   />
                 </Field>
 
-                <Field label={<span className="inline-flex items-center">短期交易日 T1 <Help tip={HELP_TEXT.T1} /></span>}>
+                <Field
+                  label={
+                    <span className="inline-flex items-center">
+                      短期交易日 T1 <Help tip={HELP_TEXT.T1} />
+                    </span>
+                  }
+                >
                   <input
                     type="number"
                     min="1"
@@ -1340,7 +1535,13 @@ export default function App() {
                   />
                 </Field>
 
-                <Field label={<span className="inline-flex items-center">中期交易日 T2 <Help tip={HELP_TEXT.T2} /></span>}>
+                <Field
+                  label={
+                    <span className="inline-flex items-center">
+                      中期交易日 T2 <Help tip={HELP_TEXT.T2} />
+                    </span>
+                  }
+                >
                   <input
                     type="number"
                     min="1"
@@ -1350,7 +1551,13 @@ export default function App() {
                   />
                 </Field>
 
-                <Field label={<span className="inline-flex items-center">长期交易日 T3 <Help tip={HELP_TEXT.T3} /></span>}>
+                <Field
+                  label={
+                    <span className="inline-flex items-center">
+                      长期交易日 T3 <Help tip={HELP_TEXT.T3} />
+                    </span>
+                  }
+                >
                   <input
                     type="number"
                     min="1"
@@ -1360,7 +1567,13 @@ export default function App() {
                   />
                 </Field>
 
-                <Field label={<span className="inline-flex items-center">σ 窗口（交易日） <Help tip={HELP_TEXT.window} /></span>}>
+                <Field
+                  label={
+                    <span className="inline-flex items-center">
+                      σ 窗口（交易日） <Help tip={HELP_TEXT.window} />
+                    </span>
+                  }
+                >
                   <input
                     type="number"
                     min="5"
@@ -1371,11 +1584,22 @@ export default function App() {
                   />
                 </Field>
               </div>
-            </Card>
+            </SectionCard>
 
-            <Card title="4. Monte Carlo 参数">
+            <SectionCard
+              id="mc"
+              title="4. Monte Carlo 参数"
+              openSection={openSection}
+              setOpenSection={setOpenSection}
+            >
               <div className="space-y-2">
-                <Field label={<span className="inline-flex items-center">MC 方法 <Help tip={HELP_TEXT.mcMethod} /></span>}>
+                <Field
+                  label={
+                    <span className="inline-flex items-center">
+                      MC 方法 <Help tip={HELP_TEXT.mcMethod} />
+                    </span>
+                  }
+                >
                   <select
                     className="w-full border rounded-lg px-2 py-1"
                     value={mcMethod}
@@ -1387,7 +1611,13 @@ export default function App() {
                   </select>
                 </Field>
 
-                <Field label={<span className="inline-flex items-center">模拟次数 K <Help tip={HELP_TEXT.sims} /></span>}>
+                <Field
+                  label={
+                    <span className="inline-flex items-center">
+                      模拟次数 K <Help tip={HELP_TEXT.sims} />
+                    </span>
+                  }
+                >
                   <input
                     type="number"
                     min="1000"
@@ -1398,7 +1628,13 @@ export default function App() {
                   />
                 </Field>
 
-                <Field label={<span className="inline-flex items-center">t ν 搜索上限 <Help tip={HELP_TEXT.dfMax} /></span>}>
+                <Field
+                  label={
+                    <span className="inline-flex items-center">
+                      t ν 搜索上限 <Help tip={HELP_TEXT.dfMax} />
+                    </span>
+                  }
+                >
                   <input
                     type="number"
                     min="10"
@@ -1409,9 +1645,18 @@ export default function App() {
                   />
                 </Field>
               </div>
-            </Card>
+            </SectionCard>
 
-            <Card title={<span className="inline-flex items-center">5. 计算模式 <Help tip={HELP_TEXT.mode} /></span>}>
+            <SectionCard
+              id="mode"
+              title={
+                <span className="inline-flex items-center">
+                  5. 计算模式 <Help tip={HELP_TEXT.mode} />
+                </span>
+              }
+              openSection={openSection}
+              setOpenSection={setOpenSection}
+            >
               <div className="space-y-3">
                 <div className="flex gap-2">
                   <button
@@ -1439,7 +1684,13 @@ export default function App() {
                 </div>
 
                 {mode === "single" && (
-                  <Field label={<span className="inline-flex items-center">单品种选择 <Help tip={HELP_TEXT.singleId} /></span>}>
+                  <Field
+                    label={
+                      <span className="inline-flex items-center">
+                        单品种选择 <Help tip={HELP_TEXT.singleId} />
+                      </span>
+                    }
+                  >
                     <select
                       className="w-full border rounded-lg px-2 py-1"
                       value={singleId}
@@ -1481,14 +1732,21 @@ export default function App() {
                               }}
                             />
                             <span>
-                              {id}{idToName[id] ? `（${idToName[id]}）` : ""}
+                              {id}
+                              {idToName[id] ? `（${idToName[id]}）` : ""}
                             </span>
                           </label>
                         );
                       })}
                     </div>
 
-                    <Field label={<span className="inline-flex items-center">组合权重（可选） <Help tip={HELP_TEXT.weightsText} /></span>}>
+                    <Field
+                      label={
+                        <span className="inline-flex items-center">
+                          组合权重（可选） <Help tip={HELP_TEXT.weightsText} />
+                        </span>
+                      }
+                    >
                       <input
                         type="text"
                         placeholder="CFI=0.7,RBFI=0.3"
@@ -1500,7 +1758,7 @@ export default function App() {
                   </>
                 )}
               </div>
-            </Card>
+            </SectionCard>
 
             <motion.button
               whileTap={{ scale: 0.97 }}
@@ -1513,7 +1771,7 @@ export default function App() {
             </motion.button>
           </div>
 
-          {/* 右侧结果区 */}
+          {/* 结果区 */}
           <div className="col-span-12 lg:col-span-8 xl:col-span-9 flex flex-col gap-4">
             <Card title="结果输出（文本摘要）">
               <AnimatePresence mode="wait">
@@ -1536,52 +1794,59 @@ export default function App() {
             </Card>
 
             <Card title="结果输出（表格视图）">
-              <table className="w-full text-sm">
-                <thead className="bg-white">
-                  <tr className="text-left border-b">
-                    <th className="py-2">方法</th>
-                    <th>置信度 c</th>
-                    <th>附加参数</th>
-                    <th>{`T1 VaR (${T1}天)`}</th>
-                    <th>{`T2 VaR (${T2}天)`}</th>
-                    <th>{`T3 VaR (${T3}天)`}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {resultRows.map((r, i) => (
-                    <tr
-                      key={i}
-                      className="border-b last:border-0 hover:bg-slate-50 transition"
-                    >
-                      <td className="py-2">{r.method}</td>
-                      <td>{r.conf}</td>
-                      <td className="max-w-[360px] truncate" title={r.extra}>
-                        {r.extra}
-                      </td>
-                      <td>{r.v1}</td>
-                      <td>{r.v2}</td>
-                      <td>{r.v3}</td>
+              <div className="w-full overflow-x-auto">
+                <table className="min-w-[720px] w-full text-sm">
+                  <thead className="bg-white">
+                    <tr className="text-left border-b">
+                      <th className="py-2">方法</th>
+                      <th>置信度 c</th>
+                      <th>附加参数</th>
+                      <th>{`T1 VaR (${T1}天)`}</th>
+                      <th>{`T2 VaR (${T2}天)`}</th>
+                      <th>{`T3 VaR (${T3}天)`}</th>
                     </tr>
-                  ))}
-                  {!resultRows.length && (
-                    <tr>
-                      <td colSpan={6} className="py-8 text-center text-slate-500">
-                        暂无结果
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {resultRows.map((r, i) => (
+                      <tr
+                        key={i}
+                        className="border-b last:border-0 hover:bg-slate-50 transition"
+                      >
+                        <td className="py-2">{r.method}</td>
+                        <td>{r.conf}</td>
+                        <td className="max-w-[360px] truncate" title={r.extra}>
+                          {r.extra}
+                        </td>
+                        <td>{r.v1}</td>
+                        <td>{r.v2}</td>
+                        <td>{r.v3}</td>
+                      </tr>
+                    ))}
+                    {!resultRows.length && (
+                      <tr>
+                        <td colSpan={6} className="py-8 text-center text-slate-500">
+                          暂无结果
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
               <div className="text-xs text-slate-500 mt-2">
                 表格仅展示 VaR 百分比（保留两位小数）。
               </div>
             </Card>
 
             <Card title="行情走势图（价格）">
-              <div className="h-[360px]">
+              <div ref={chartRef} className="h-[260px] sm:h-[320px] lg:h-[360px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={priceSeries}>
-                    <XAxis dataKey="date" tickMargin={8} minTickGap={18} tick={{ fontSize: 12 }} />
+                    <XAxis
+                      dataKey="date"
+                      tickMargin={8}
+                      minTickGap={18}
+                      tick={{ fontSize: 10 }}
+                    />
                     <YAxis domain={["auto", "auto"]} />
                     <Tooltip />
                     <Legend />
@@ -1608,7 +1873,7 @@ export default function App() {
         </div>
       </div>
 
-      {/* 进度遮罩：前端阻塞 */}
+      {/* 进度遮罩 */}
       <ProgressOverlay open={loading} text={progressText || "Monte Carlo 计算中…"} />
 
       {/* 用户手册弹窗 */}
@@ -1622,19 +1887,22 @@ export default function App() {
             onClick={() => setShowManual(false)}
           >
             <motion.div
-              className="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-4xl max-h-[85vh] flex flex-col overflow-hidden"
+              className="bg-white rounded-2xl shadow-xl border border-slate-200 
+                         w-full max-w-4xl max-h-[90vh] sm:max-h-[85vh] 
+                         flex flex-col overflow-hidden"
               initial={{ scale: 0.96, opacity: 0, y: 8 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.96, opacity: 0, y: 8 }}
               transition={{ duration: 0.2 }}
               onClick={(e) => e.stopPropagation()}
             >
-              {/* ✅ 固定头部 */}
-              <div className="sticky top-0 z-20 bg-white/95 backdrop-blur border-b border-slate-200 px-6 py-3 flex items-center">
+              {/* 固定头部 */}
+              <div className="sticky top-0 z-20 bg-white/95 backdrop-blur border-b border-slate-200 px-4 sm:px-6 py-3 flex items-center">
                 <div className="text-lg font-bold">用户手册</div>
 
                 <div className="ml-auto flex items-center gap-2">
                   <button
+                    type="button"
                     onClick={downloadManualPDF}
                     className="px-3 py-1.5 rounded-lg text-sm border hover:bg-slate-50 active:scale-95 transition"
                   >
@@ -1642,6 +1910,7 @@ export default function App() {
                   </button>
 
                   <button
+                    type="button"
                     onClick={() => setShowManual(false)}
                     className="px-3 py-1.5 rounded-lg text-sm border hover:bg-slate-50 active:scale-95 transition"
                   >
@@ -1650,31 +1919,63 @@ export default function App() {
                 </div>
               </div>
 
-              {/* ✅ 只滚动正文 */}
-              <div ref={manualBodyRef} className="manual-body flex-1 overflow-auto px-6 py-4">
+              {/* 只滚动正文 */}
+              <div
+                ref={manualBodyRef}
+                className="manual-body flex-1 overflow-auto px-4 sm:px-6 py-3 sm:py-4"
+              >
                 <div className="text-slate-900">
                   <ReactMarkdown
                     remarkPlugins={[remarkMath]}
                     rehypePlugins={[rehypeKatex]}
                     components={{
-                      h1: (p) => <h1 className="text-2xl font-bold mt-2 mb-4" {...p} />,
-                      h2: (p) => <h2 className="text-xl font-semibold mt-6 mb-3" {...p} />,
-                      h3: (p) => <h3 className="text-lg font-semibold mt-4 mb-2" {...p} />,
-                      p: (p) => <p className="text-sm leading-7 my-2 text-slate-800" {...p} />,
-                      ul: (p) => <ul className="list-disc pl-5 my-2 space-y-1 text-sm" {...p} />,
-                      ol: (p) => <ol className="list-decimal pl-5 my-2 space-y-1 text-sm" {...p} />,
+                      h1: (p) => (
+                        <h1 className="text-2xl font-bold mt-2 mb-4" {...p} />
+                      ),
+                      h2: (p) => (
+                        <h2 className="text-xl font-semibold mt-6 mb-3" {...p} />
+                      ),
+                      h3: (p) => (
+                        <h3 className="text-lg font-semibold mt-4 mb-2" {...p} />
+                      ),
+                      p: (p) => (
+                        <p
+                          className="text-sm leading-7 my-2 text-slate-800"
+                          {...p}
+                        />
+                      ),
+                      ul: (p) => (
+                        <ul
+                          className="list-disc pl-5 my-2 space-y-1 text-sm"
+                          {...p}
+                        />
+                      ),
+                      ol: (p) => (
+                        <ol
+                          className="list-decimal pl-5 my-2 space-y-1 text-sm"
+                          {...p}
+                        />
+                      ),
                       li: (p) => <li className="leading-7" {...p} />,
                       blockquote: (p) => (
-                        <blockquote className="border-l-4 border-slate-300 pl-3 py-1 my-3 text-slate-600 bg-slate-50 rounded-r" {...p} />
+                        <blockquote
+                          className="border-l-4 border-slate-300 pl-3 py-1 my-3 text-slate-600 bg-slate-50 rounded-r"
+                          {...p}
+                        />
                       ),
                       code: ({ inline, className, children, ...props }) =>
                         inline ? (
-                          <code className="px-1 py-0.5 rounded bg-slate-100 text-slate-900 text-[0.9em]" {...props}>
+                          <code
+                            className="px-1 py-0.5 rounded bg-slate-100 text-slate-900 text-[0.9em]"
+                            {...props}
+                          >
                             {children}
                           </code>
                         ) : (
                           <pre className="bg-slate-900 text-slate-50 rounded-xl p-3 overflow-auto text-xs my-3">
-                            <code className={className} {...props}>{children}</code>
+                            <code className={className} {...props}>
+                              {children}
+                            </code>
                           </pre>
                         ),
                     }}
@@ -1684,7 +1985,6 @@ export default function App() {
                 </div>
               </div>
             </motion.div>
-
           </motion.div>
         )}
       </AnimatePresence>
