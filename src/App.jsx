@@ -14,8 +14,15 @@ import {
 } from "recharts";
 import clsx from "clsx";
 
-import "katex/dist/katex.min.css";
+import jsPDF from "jspdf";
+import html2canvas from "html2canvas";
+
+import "katex/dist/katex.css";
 import { InlineMath, BlockMath } from "react-katex";
+
+import ReactMarkdown from "react-markdown";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
 
 import VarWorker from "./workers/varWorker?worker";
 import testData from "./data/testData.json";
@@ -27,62 +34,232 @@ const PALETTE = [
   "#e11d48", "#0ea5e9", "#84cc16", "#a855f7",
 ];
 
-// ==================== 帮助文案（支持 KaTeX：$...$ 行内、$$...$$ 块） ====================
+// ==================== 用户手册 Markdown（完整口径说明） ====================
+const USER_MANUAL_MD = `
+# 期货 VaR 计算器（Web）用户手册
+
+本工具用于单品种或多品种期货组合在不同方法下的 VaR（Value-at-Risk）估计，并给出价格走势图与详细的参数/口径说明。
+
+---
+
+## 1. 快速开始
+1. 点击 **读取 Excel/CSV** 导入数据，或点击 **加载测试数据**。
+2. 在 **列映射** 中确认四列：
+   - 合约细则ID（品种ID）
+   - 合约名称（可选，图例/展示使用）
+   - 报价日期
+   - 结算价
+3. 在左侧设置参数（置信度、持有期、σ 窗口、MC 方法、模拟次数等）。
+4. 点击 **开始计算**。
+5. 结果依次输出：
+   - 文本摘要（含口径与中间拟合值）
+   - 表格视图（VaR%）
+   - 行情走势图（价格，最近 $w$ 天）
+
+> 数据格式可通过顶部 **下载标准数据模板** 获取。
+
+---
+
+## 2. 数据要求与口径
+
+### 2.1 必要字段
+- **合约细则ID**：品种或合约唯一标识，用于分组。
+- **合约名称**：可选，仅用于界面展示与图例。
+- **报价日期**：交易日日期。
+- **结算价**：用于计算收益与绘制价格走势。
+
+### 2.2 对数收益率（计算口径）
+程序使用对数收益率：
+$$
+r_t = \\ln\\left(\\frac{S_t}{S_{t-1}}\\right)
+$$
+其中 $S_t$ 为第 $t$ 日结算价/收盘价。
+
+---
+
+## 3. 共用参数说明
+
+### 3.1 置信度 $c$
+VaR 定义为损失分布的左尾 $(1-c)$ 分位点（取损失为正）：
+$$
+VaR_{c,T} = -Q_{1-c}(R_T)
+$$
+常用：
+- $c=0.95$（$z=1.645$）
+- $c=0.99$（$z=2.330$）
+
+### 3.2 持有期 $T$
+持有期以**交易日**计。工具默认给三档：
+- $T_1=1$（短期）
+- $T_2=5$（一周左右）
+- $T_3=22$（一月左右）
+
+在正态假设下，VaR 会按 $\\sqrt{T}$ 放大：
+$$
+VaR_{c,T} = VaR_{c,1}\\sqrt{T}
+$$
+
+### 3.3 σ 窗口 $w$
+用于衡量**近期风险水平**的滚动窗口（交易日）：
+$$
+\\sigma_t = \\mathrm{Std}(r_{t-w+1},\\dots,r_t)
+$$
+- 正态参数法使用最近 $w$ 天估计 $\\sigma_{\\text{latest}}$。
+- Monte Carlo 方法也使用最近 $w$ 天估计 $\\mu_w,\\sigma_w$（或作为 Bootstrap 重采样池）。
+- 行情图仅展示最近 $w$ 天价格走势。
+
+**经验推荐：**
+- 日频期货：$w=55$（约 1 季度）是平衡“及时性/稳定性”的常用取值。
+- 追求更平滑：$w=120$~$250$。
+- 若样本不足 $w$，自动退化为全样本估计。
+
+---
+
+## 4. 正态参数 VaR
+
+### 4.1 单品种
+假设收益 i.i.d. 正态：
+$$
+r \\sim \\mathcal N(\\mu,\\sigma^2)
+$$
+用最近 $w$ 天估计 $\\sigma_{\\text{latest}}$ 后：
+$$
+VaR_{c,T}= z_c \\cdot \\sigma_{\\text{latest}}\\sqrt{T}
+$$
+（均值 $\\mu$ 在日频 VaR 中可忽略）
+
+### 4.2 多品种组合
+对齐交易日交集后估计相关结构 $\\Sigma$，权重向量 $w$：
+$$
+\\sigma_p = \\sqrt{w^\\top \\Sigma w}
+$$
+$$
+VaR^{(p)}_{c,T}= z_c \\cdot \\sigma_p\\sqrt{T}
+$$
+
+---
+
+## 5. Monte Carlo VaR（最近 $w$ 天口径）
+
+所有 MC 方法输出统一为：
+$$
+VaR_{c,T} = -Q_{1-c}(R_T)
+$$
+其中 $R_T$ 为模拟得到的未来 $T$ 天游走累计收益。
+
+### 5.1 Normal MC（正态 i.i.d.）
+最近 $w$ 天估计：
+$$
+r \\sim \\mathcal N(\\mu_w,\\sigma_w^2)
+$$
+然后独立生成 $K$ 条 $T$ 天路径。
+
+**优点**：快速、稳定、解释性强  
+**缺点**：尾部偏薄  
+**场景**：常态行情或收益近似正态时的日常风险监控。
+
+### 5.2 t-MC（厚尾 t 分布 + ν 拟合）
+最近 $w$ 天拟合 t 分布：
+$$
+r \\sim t_{\\nu_w}(\\mu_w,\\sigma_w)
+$$
+程序自动拟合自由度 $\\nu_w$（输出到结果中）。
+
+**优点**：尾部更厚，适合极端风险  
+**缺点**：拟合依赖样本量、计算更慢  
+**场景**：波动聚集、跳跃明显、尾部厚的期货品种。
+
+#### t ν 搜索上限 $\\nu_{\\max}$
+拟合时搜索区间为 $[2,\\nu_{\\max}]$。$\\nu$ 越小尾越厚；$\\nu\\to\\infty$ 逼近正态。
+
+**如何设置：**
+- 默认 $\\nu_{\\max}=60$：适用于大多数日频期货（有厚尾但不会极端到需要很大上限）。
+- 若样本 **很厚尾/危机期数据多**：可用 $\\nu_{\\max}=30\\sim 60$，避免无意义地拟合到近正态。
+- 若品种**非常稳定、尾部接近正态**：可提高到 $\\nu_{\\max}=100\\sim 200$，让拟合有空间趋近正态。
+- 样本量较小（<100）时不宜设置太大（建议 $\\le 60$），否则拟合不稳。
+
+### 5.3 Bootstrap MC（历史重采样）
+从最近 $w$ 天收益池重采样：
+$$
+r_t^{(k)} \\leftarrow \\mathrm{sample}(\\{r_{t-w+1},\\dots,r_t\\})
+$$
+
+**优点**：最少假设，能保留偏度/峰度/尾部形态  
+**缺点**：尾部是否可靠取决于近期样本中是否包含极端日  
+**场景**：不希望做分布假设；或用来验证 Normal/t-MC 结果。
+
+---
+
+## 6. 结果解读
+- **VaR%** 表示未来 $T$ 天在置信度 $c$ 下的最大预期损失比例。
+- 当 Normal MC 和 正态参数法同口径（最近 $w$ 天 + 正态）时，两者应非常接近；差异主要来自 MC 采样误差或均值项。
+- 若 t-MC 明显大于 Normal MC，说明近期收益尾部更厚、极端风险更显著。
+
+---
+
+## 7. 常见问题
+**Q1：组合提示对齐日期太少？**  
+A：参与品种交易日交集太少，请减少品种或换重叠更多的品种。
+
+**Q2：t-MC 拟合的 $\\nu$ 很小？**  
+A：近期极端波动显著、尾厚。可结合 Bootstrap 验证。
+
+**Q3：MC 结果不够稳定？**  
+A：提高模拟次数 $K$（如 200k→500k）或适当增大 $w$。
+
+`;
+
+
+// ==================== 帮助文案（逐参完整解释） ====================
 const HELP_TEXT = {
   idCol:
     "品种/合约的唯一标识列，用于区分不同期货品种。多品种组合时按该列分组。",
+  nameCol:
+    "合约名称列（可选）。仅用于显示在图例/下拉中，不参与任何计算。",
   dateCol:
-    "交易日期列。多品种组合会按日期对齐，相关性与组合收益只使用对齐后的有效日期交集。",
+    "交易日期列。多品种组合计算会按日期对齐，相关性和组合收益只使用对齐后的有效交集交易日。",
   priceCol:
-    "结算价/收盘价列。先用该列计算日对数收益率：$$ r_t = \\ln\\left(\\frac{S_t}{S_{t-1}}\\right). $$",
+    "结算价/收盘价列。程序先用该列计算对数收益：$r_t=\\ln(S_t/S_{t-1})$。行情图也使用该列绘制。",
 
   conf1:
-    "置信度 $c_1$。VaR 为未来 $T$ 天损失分布的左尾 $(1-c)$ 分位点（取损失绝对值）。\n" +
-    "$$ VaR_{c,T} = z_c \\cdot \\sigma \\cdot \\sqrt{T}. $$\n" +
-    "其中 $z_c$ 为标准正态分位（$c=0.95$ 时 $z=1.645$）。",
+    "置信度 $c_1$（如 0.95）。VaR 为未来 $T$ 天损失分布的左尾 $(1-c)$ 分位点：$VaR=-Q_{1-c}(R_T)$。",
   conf2:
-    "置信度 $c_2$。常用 $c=0.99$（$z=2.330$），对应更极端的尾部风险。",
-
+    "置信度 $c_2$（如 0.99），对应更极端的尾部风险衡量。",
   T1:
-    "持有期 $T_1$（交易日）。VaR 从 1 天放大到 $T$ 天口径：$$ VaR_{c,T}=VaR_{c,1}\\sqrt{T}. $$",
+    "持有期 $T_1$（交易日）。短期风险口径，默认 1 天。",
   T2:
-    "持有期 $T_2$（交易日）。示例：5 天。正态参数法：$$ VaR_{c,T} = z_c\\,\\sigma\\sqrt{T}. $$",
+    "持有期 $T_2$（交易日）。中期口径，默认 5 天。",
   T3:
-    "持有期 $T_3$（交易日）。示例：22 天（约 1 个月）。VaR 按 $\\sqrt{T}$ 放大。",
-
+    "持有期 $T_3$（交易日）。长期口径，默认 22 天。",
   window:
-    "正态参数法的波动率窗口。用最近窗口收益计算滚动波动率：\n" +
-    "$$ \\sigma_t = \\text{Std}(r_{t-w+1},\\dots,r_t). $$\n" +
-    "若样本不足窗口，则使用全样本标准差。",
-
+    "σ 窗口 $w$（交易日）。用于估计近期波动率：$\\sigma_t=\\text{Std}(r_{t-w+1},...,r_t)$。本工具中：\n" +
+    "• 正态参数法用 $\\sigma_{latest}(w)$。\n" +
+    "• MC 方法也用最近 $w$ 天估 $\\mu_w,\\sigma_w$（Bootstrap 则以最近 $w$ 天为采样池）。\n" +
+    "• 行情图仅展示最近 $w$ 天价格。",
   mcMethod:
     "Monte Carlo 方法：\n" +
-    "• Normal：假设收益 $r\\sim\\mathcal N(\\mu,\\Sigma)$ 且 i.i.d.，按估计的相关结构模拟路径。\n" +
-    "• t_auto：厚尾 $t$ 分布 MC，自动拟合自由度 $\\nu$ 以刻画尾部。\n" +
-    "• Bootstrap：历史收益重采样拼路径，减少正态假设。",
-
+    "• Normal：假设收益正态 i.i.d.，用最近 $w$ 天估参数后模拟。\n" +
+    "• t-MC：假设收益服从 t 分布并拟合自由度 $\\nu$，更能刻画厚尾。\n" +
+    "• Bootstrap：从最近 $w$ 天历史收益重采样拼路径，无分布假设。",
   sims:
-    "模拟次数 $K$。每次生成 $K$ 条未来 $T$ 天收益路径，取左尾分位作为 VaR。\n" +
-    "$$ VaR_{c,T} = - Q_{1-c}(R_T^{(1)},\\dots,R_T^{(K)}). $$\n" +
-    "$K$ 越大越稳健但更慢（示例 $K=200{,}000$）。",
-
+    "模拟次数 $K$。每次生成 $K$ 条未来 $T$ 天收益路径，取左尾分位作为 VaR。$K$ 越大结果越稳定，但计算更久。",
   dfMax:
-    "t_auto 模式的自由度上限 $\\nu_{\\max}$。$\\nu$ 越小尾部越厚；程序在 $[2,\\nu_{\\max}]$ 内拟合最优 $\\nu$。",
-
+    "t 分布自由度搜索上限 $\\nu_{max}$。拟合区间为 $[2,\\nu_{max}]$。\n" +
+    "推荐设置：\n" +
+    "• 常规日频期货：$\\nu_{max}=60$（默认）。\n" +
+    "• 明显厚尾/危机期样本多：30~60。\n" +
+    "• 尾部接近正态、样本很长：100~200。\n" +
+    "• 样本较短（<100），不建议超过 60。",
   mode:
     "计算模式：\n" +
-    "• 单品种：对单一品种收益计算 VaR。\n" +
-    "• 多品种组合：按日期对齐后估计协方差/相关性，再按权重计算组合 VaR。",
-
-  singleId: "单品种模式下选择的目标品种。",
-
+    "• 单品种：对某一品种计算 VaR。\n" +
+    "• 多品种组合：按日期对齐后估相关结构，再按权重计算组合 VaR。",
+  singleId:
+    "单品种模式下选择一个品种进行 VaR 估计。",
   portfolioIds:
     "多品种组合选取列表。组合 VaR 只使用对齐后的有效交集日期；交集太少会提示失败。",
-
   weightsText:
-    "组合权重向量 $w$（权重和为 1）。默认等权。\n" +
-    "组合波动率：$$ \\sigma_p=\\sqrt{w^\\top\\Sigma w}. $$\n" +
-    "自定义输入格式：“品种=权重,品种=权重…”，程序自动归一化。",
+    "组合权重向量输入。格式：“品种=权重,品种=权重…”。若不填则等权。程序会自动归一化，使权重和为 1。",
 };
 
 // ==================== KaTeX 渲染器 ====================
@@ -116,8 +293,8 @@ const Help = ({ tip }) => {
     const vw = window.innerWidth;
     const vh = window.innerHeight;
 
-    const bubbleW = 300;
-    const bubbleH = 180;
+    const bubbleW = 320;
+    const bubbleH = 200;
     const padding = 8;
 
     let x = rect.left + rect.width / 2;
@@ -173,7 +350,7 @@ const Help = ({ tip }) => {
       {open &&
         createPortal(
           <div
-            className="fixed z-[2147483647] w-[300px] max-w-[85vw]
+            className="fixed z-[2147483647] w-[320px] max-w-[85vw]
                        rounded-xl bg-slate-900 text-white text-xs leading-relaxed
                        px-3 py-2 shadow-2xl whitespace-pre-wrap
                        animate-in fade-in zoom-in-95"
@@ -198,7 +375,7 @@ const Help = ({ tip }) => {
   );
 };
 
-// ==================== 计算函数（对齐你原 Py 逻辑） ====================
+// ==================== 计算函数 ====================
 function zFromConf(conf) {
   if (Math.abs(conf - 0.95) < 1e-6) return 1.645;
   if (Math.abs(conf - 0.99) < 1e-6) return 2.33;
@@ -236,11 +413,23 @@ function latestSigmaRolling(logRetArr, window = 55) {
   return Math.sqrt(s / (sub.length - 1));
 }
 
+function meanStd(arr) {
+  const a = arr.filter(Number.isFinite);
+  const mu = a.reduce((s, v) => s + v, 0) / a.length;
+  let ss = 0;
+  for (const v of a) {
+    const d = v - mu;
+    ss += d * d;
+  }
+  const sigma = Math.sqrt(ss / (a.length - 1));
+  return { mu, sigma };
+}
+
 function normalVarSingle(logRetArr, conf, T, window) {
   const z = zFromConf(conf);
   const sigma = latestSigmaRolling(logRetArr, window);
-  if (!Number.isFinite(sigma)) return { var: NaN, sigma };
-  return { var: z * sigma * Math.sqrt(T), sigma };
+  if (!Number.isFinite(sigma)) return { var: NaN, sigma, z };
+  return { var: z * sigma * Math.sqrt(T), sigma, z };
 }
 
 function alignedWideReturns(grouped) {
@@ -361,7 +550,7 @@ function normalVarPortfolio(grouped, conf, T, window, weights) {
   const sigmaP = Math.sqrt(sigmaP2);
   const z = zFromConf(conf);
 
-  return { var: z * sigmaP * Math.sqrt(T), sigmas, corr };
+  return { var: z * sigmaP * Math.sqrt(T), sigmas, corr, sigmaP, z };
 }
 
 // ==================== UI 小组件 ====================
@@ -382,15 +571,62 @@ const Card = ({ title, children, className }) => (
 );
 
 const Field = ({ label, children }) => (
-  <label className="grid grid-cols-2 items-center gap-3 text-sm">
+  <label className="grid grid-cols-1 sm:grid-cols-2 items-center gap-2 sm:gap-3 text-sm">
     <span className="text-slate-600">{label}</span>
     {children}
   </label>
 );
 
+// ==================== 进度遮罩（前端锁屏 + 好看进度条） ====================
+const ProgressOverlay = ({ open, text = "计算中…" }) => {
+  if (!open) return null;
+  return createPortal(
+    <AnimatePresence>
+      <motion.div
+        className="fixed inset-0 z-[9999] bg-black/40 backdrop-blur-sm flex items-center justify-center p-6"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+      >
+        <motion.div
+          className="w-full max-w-md rounded-2xl bg-white shadow-2xl border border-slate-200 p-6"
+          initial={{ scale: 0.96, opacity: 0, y: 8 }}
+          animate={{ scale: 1, opacity: 1, y: 0 }}
+          exit={{ scale: 0.96, opacity: 0, y: 8 }}
+          transition={{ duration: 0.2 }}
+        >
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-full border-4 border-slate-200 border-t-slate-900 animate-spin" />
+            <div>
+              <div className="font-semibold text-slate-900">正在计算 VaR</div>
+              <div className="text-sm text-slate-600 mt-0.5">{text}</div>
+            </div>
+          </div>
+
+          <div className="mt-5 h-3 w-full rounded-full bg-slate-100 overflow-hidden">
+            <motion.div
+              className="h-full w-1/2 rounded-full bg-gradient-to-r from-slate-900 via-slate-700 to-slate-900"
+              initial={{ x: "-100%" }}
+              animate={{ x: "200%" }}
+              transition={{ repeat: Infinity, duration: 1.1, ease: "linear" }}
+            />
+          </div>
+
+          <div className="text-xs text-slate-500 mt-3">
+            请勿关闭页面，计算完成后会自动恢复操作。
+          </div>
+        </motion.div>
+      </motion.div>
+    </AnimatePresence>,
+    document.body
+  );
+};
+
 // ==================== 主 App ====================
 export default function App() {
   const workerRef = useRef(null);
+  const manualBodyRef = useRef(null);
+
   if (!workerRef.current) workerRef.current = new VarWorker();
 
   const [rawRows, setRawRows] = useState([]);
@@ -398,6 +634,7 @@ export default function App() {
   const [fileName, setFileName] = useState("");
 
   const [idCol, setIdCol] = useState("");
+  const [nameCol, setNameCol] = useState("");
   const [dateCol, setDateCol] = useState("");
   const [priceCol, setPriceCol] = useState("");
 
@@ -406,9 +643,9 @@ export default function App() {
   const [T1, setT1] = useState(1);
   const [T2, setT2] = useState(5);
   const [T3, setT3] = useState(22);
-  const [window, setWindow] = useState(66);
+  const [window, setWindow] = useState(55); // ✅ 共用参数里
 
-  const [mcMethod, setMcMethod] = useState("normal");
+  const [mcMethod, setMcMethod] = useState("normal"); // normal | t_mc | bootstrap
   const [sims, setSims] = useState(200000);
   const [dfMax, setDfMax] = useState(60);
 
@@ -417,6 +654,8 @@ export default function App() {
   const [portfolioIds, setPortfolioIds] = useState([]);
   const [weightsText, setWeightsText] = useState("");
 
+  const [showManual, setShowManual] = useState(false);
+
   const [loading, setLoading] = useState(false);
   const [progressText, setProgressText] = useState("");
   const [resultRows, setResultRows] = useState([]);
@@ -424,6 +663,93 @@ export default function App() {
 
   const [priceSeries, setPriceSeries] = useState([]);
   const [priceSeriesIds, setPriceSeriesIds] = useState([]);
+  const [idToName, setIdToName] = useState({});
+
+  // ============ 标准模板下载（含3行样例） ============
+  const downloadTemplate = () => {
+    const sample = [
+      {
+        "合约细则ID": "CFI",
+        "合约名称": "棉花指数",
+        "报价日期": "2024-01-02",
+        "结算价": 15250,
+      },
+      {
+        "合约细则ID": "CFI",
+        "合约名称": "棉花指数",
+        "报价日期": "2024-01-03",
+        "结算价": 15310,
+      },
+      {
+        "合约细则ID": "RBFI",
+        "合约名称": "螺纹钢指数",
+        "报价日期": "2024-01-02",
+        "结算价": 3612,
+      },
+    ];
+    const ws = XLSX.utils.json_to_sheet(sample, { skipHeader: false });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "模板");
+    XLSX.writeFile(wb, "VaR标准数据模板.xlsx");
+  };
+
+  const downloadManualPDF = async () => {
+    try {
+      const el = manualBodyRef.current;
+      if (!el) {
+        alert("未找到手册正文区域，请先打开用户手册后再下载。");
+        return;
+      }
+
+      // 临时把滚动条展开成完整高度，避免只截到可视区域
+      const prevHeight = el.style.height;
+      const prevOverflow = el.style.overflow;
+      el.style.height = "auto";
+      el.style.overflow = "visible";
+
+      const canvas = await html2canvas(el, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: "#ffffff",
+        windowWidth: el.scrollWidth,
+        windowHeight: el.scrollHeight,
+      });
+
+      // 恢复样式
+      el.style.height = prevHeight;
+      el.style.overflow = prevOverflow;
+
+      const imgData = canvas.toDataURL("image/png");
+      const pdf = new jsPDF("p", "mm", "a4");
+
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+
+      // 图片按页高切分页
+      const imgW = pageW;
+      const imgH = (canvas.height * imgW) / canvas.width;
+
+      let y = 0;
+      let leftH = imgH;
+
+      pdf.addImage(imgData, "PNG", 0, y, imgW, imgH);
+      leftH -= pageH;
+
+      while (leftH > 0) {
+        pdf.addPage();
+        y = - (imgH - leftH);
+        pdf.addImage(imgData, "PNG", 0, y, imgW, imgH);
+        leftH -= pageH;
+      }
+
+      pdf.save("VaR用户手册.pdf");
+    } catch (e) {
+      console.error(e);
+      alert("PDF 导出失败：" + e.message);
+    }
+  };
+
+
 
   // ============ 文件读取 ============
   const onFile = async (file) => {
@@ -445,7 +771,6 @@ export default function App() {
     autoSetColumns(cols);
   };
 
-  // ============ 加载内置测试数据 ============
   const loadTestData = () => {
     setFileName("内置测试数据 testData.json");
     setRawRows(testData);
@@ -457,17 +782,19 @@ export default function App() {
   const autoSetColumns = (cols) => {
     const autoPick = (cands) => {
       for (const c of cands) if (cols.includes(c)) return c;
-      return cols[0] || "";
+      return "";
     };
     const _id = autoPick(["合约细则ID", "品种", "symbol", "ID"]);
+    const _name = autoPick(["合约名称", "合约细则描述", "name", "品种名称"]);
     const _date = autoPick(["报价日期", "日期", "date", "交易日"]);
     const _price = autoPick(["结算价", "价格", "settle", "close"]);
-    setIdCol(_id);
-    setDateCol(_date);
-    setPriceCol(_price);
+    setIdCol(_id || cols[0] || "");
+    setNameCol(_name || "");
+    setDateCol(_date || cols[0] || "");
+    setPriceCol(_price || cols[0] || "");
   };
 
-  // ============ 数据预处理 ============
+  // ============ 数据预处理（含名称映射） ============
   const { groupedAll, idsAll } = useMemo(() => {
     if (!rawRows.length || !idCol || !dateCol || !priceCol)
       return { groupedAll: {}, idsAll: [] };
@@ -475,6 +802,7 @@ export default function App() {
     const cleaned = rawRows
       .map((r) => ({
         id: String(r[idCol]),
+        name: nameCol ? String(r[nameCol] ?? "") : "",
         date: new Date(r[dateCol]),
         price: Number(r[priceCol]),
       }))
@@ -500,6 +828,12 @@ export default function App() {
       } else tmp.push(cur);
     }
 
+    const nameMap = {};
+    for (const row of tmp) {
+      if (row.name && !nameMap[row.id]) nameMap[row.id] = row.name;
+    }
+    setIdToName(nameMap);
+
     const grouped = {};
     for (const row of tmp) {
       if (!grouped[row.id]) grouped[row.id] = [];
@@ -518,9 +852,8 @@ export default function App() {
       retGrouped[id] = out;
     }
 
-    const ids = Object.keys(retGrouped);
-    return { groupedAll: retGrouped, idsAll: ids };
-  }, [rawRows, idCol, dateCol, priceCol]);
+    return { groupedAll: retGrouped, idsAll: Object.keys(retGrouped) };
+  }, [rawRows, idCol, nameCol, dateCol, priceCol]);
 
   React.useEffect(() => {
     if (idsAll.length) {
@@ -574,14 +907,15 @@ export default function App() {
 
     let lines = [];
     let rows = [];
-    lines.push(`========== 计算结果 ==========\n`);
     lines.push(
       `共用参数： c1=${conf1.toFixed(3)}, c2=${conf2.toFixed(
         3
-      )} | T1/T2/T3=${T1}/${T2}/${T3} 交易日`
+      )} | T1/T2/T3=${T1}/${T2}/${T3} 交易日 | σ窗口=${window}日`
     );
-    lines.push(`正态参数法： σ窗口=${window} 交易日`);
-    lines.push(`Monte Carlo： 方法=${mcMethod} | K=${sims} | t df_max=${dfMax}`);
+    lines.push(
+      `Monte Carlo： 方法=${mcMethod === "t_mc" ? "t-MC" : mcMethod
+      } | K=${sims} | ν_max=${dfMax} | 口径=最近${window}日`
+    );
     lines.push("");
 
     const callWorkerSingle = (r, conf, T) =>
@@ -599,10 +933,17 @@ export default function App() {
         const sub = groupedAll[cid];
         const rAll = sub.map((x) => x.logRet).filter(Number.isFinite);
 
+        const rMC = rAll.length > window ? rAll.slice(-window) : rAll;
+        const { mu: muW, sigma: sigmaW } = meanStd(rMC);
         const sigmaLatest = latestSigmaRolling(rAll, window);
-        lines.push(`[单品种] ${cid}`);
-        lines.push(`最新 σ(窗口规则) = ${sigmaLatest.toFixed(6)}\n`);
 
+        lines.push(`[单品种] ${cid}${idToName[cid] ? `（${idToName[cid]}）` : ""}`);
+        lines.push(
+          `MC口径(最近${window}日)：μ_w=${muW.toFixed(6)}, σ_w=${sigmaW.toFixed(6)}`
+        );
+        lines.push(`最新 σ_latest(窗口) = ${sigmaLatest.toFixed(6)}\n`);
+
+        // 正态参数
         lines.push("— 正态参数 VaR（收益率口径）—");
         for (const c of confs) {
           const z = zFromConf(c);
@@ -629,14 +970,20 @@ export default function App() {
         }
         lines.push("");
 
-        lines.push(`— 蒙特卡洛 VaR（${mcMethod}）—`);
+        // MC
+        lines.push(`— 蒙特卡洛 VaR（${mcMethod === "t_mc" ? "t-MC" : mcMethod}；最近${window}日口径）—`);
         for (const c of confs) {
+          const z = zFromConf(c);
           const vList = [];
+          let nuFit = null;
+
           for (const T of Ts) {
             setProgressText(`MC 计算中：c=${c.toFixed(3)} T=${T} …`);
-            const out = await callWorkerSingle(rAll, c, T);
+            const out = await callWorkerSingle(rMC, c, T);
             vList.push(out.var);
+            if (mcMethod === "t_mc") nuFit = out.nu ?? out.df ?? nuFit;
           }
+
           lines.push(
             `  c=${c.toFixed(3)} | ` +
               Ts.map(
@@ -644,20 +991,26 @@ export default function App() {
                   `T=${T}: ${vList[i].toFixed(6)} (${(vList[i] * 100).toFixed(
                     3
                   )}%)`
-              ).join(" | ")
+              ).join(" | ") +
+              (mcMethod === "t_mc" && nuFit ? ` | ν=${Number(nuFit).toFixed(3)}` : "")
           );
+
           rows.push({
-            method: `MC ${mcMethod}（${cid}）`,
+            method: `${mcMethod === "t_mc" ? "t-MC" : "MC " + mcMethod}（${cid}）`,
             conf: c.toFixed(3),
-            extra: `K=${sims}${mcMethod === "t_auto" ? " | ν自动拟合" : ""}`,
+            extra:
+              `z=${z.toFixed(3)} | μ_w=${muW.toFixed(6)} | σ_w=${sigmaW.toFixed(6)}` +
+              (mcMethod === "t_mc" && nuFit ? ` | ν=${Number(nuFit).toFixed(3)}` : "") +
+              ` | window=${window} | K=${sims}`,
             v1: fmtPct2(vList[0]),
             v2: fmtPct2(vList[1]),
             v3: fmtPct2(vList[2]),
           });
         }
 
+        // 行情图：最近 window 天
         let last = null;
-        const series = sub
+        const fullSeries = sub
           .map((x) => {
             const p = Number(x.price);
             if (Number.isFinite(p) && p !== 0) last = p;
@@ -670,14 +1023,13 @@ export default function App() {
           .filter((x) => Number.isFinite(x[cid]));
 
         setPriceSeriesIds([cid]);
-        setPriceSeries(series);
+        setPriceSeries(fullSeries.slice(-window));
       } else {
+        // ==================== portfolio 模式 ====================
         let ids = portfolioIds;
         if (ids.length < 2) throw new Error("组合品种不足（至少选 2 个）");
 
-        const grouped0 = Object.fromEntries(
-          ids.map((id) => [id, groupedAll[id]])
-        );
+        const grouped0 = Object.fromEntries(ids.map((id) => [id, groupedAll[id]]));
 
         const validIds = ids.filter((id) => {
           const r = grouped0[id].map((x) => x.logRet).filter(Number.isFinite);
@@ -687,18 +1039,9 @@ export default function App() {
           throw new Error("有效品种不足：至少 2 个品种拥有 >=2 条有效收益率。");
         }
 
-        const grouped = Object.fromEntries(
-          validIds.map((id) => [id, grouped0[id]])
-        );
+        const grouped = Object.fromEntries(validIds.map((id) => [id, grouped0[id]]));
         const weights = parseWeights(validIds);
         ids = validIds;
-
-        const sigLatest = Object.fromEntries(
-          ids.map((id) => {
-            const r = grouped[id].map((x) => x.logRet).filter(Number.isFinite);
-            return [id, latestSigmaRolling(r, window)];
-          })
-        );
 
         let wideRaw = alignedWideReturns(grouped);
         let wideClean = wideRaw.filter((row) =>
@@ -710,24 +1053,22 @@ export default function App() {
           );
         }
 
-        const sigTxt = ids
-          .map((id) => `${id}:${sigLatest[id].toFixed(6)}`)
-          .join("; ");
-        const wTxt = ids
-          .map((id) => `${id}=${weights[id].toFixed(3)}`)
-          .join(", ");
+        const wTxt = ids.map((id) => `${id}=${weights[id].toFixed(3)}`).join(", ");
 
         lines.push("[多品种组合]");
         lines.push("参与品种： " + ids.join(", "));
         lines.push("权重（归一化后）： " + wTxt);
-        lines.push("最新 σ_i： " + sigTxt + "\n");
 
-        lines.push("— 正态参数 组合 VaR（收益率口径）—");
+        // 正态参数组合 VaR
+        lines.push("\n— 正态参数 组合 VaR（收益率口径）—");
         for (const c of confs) {
-          const z = zFromConf(c);
-          const vList = Ts.map(
-            (T) => normalVarPortfolio(grouped, c, T, window, weights).var
+          const outP = Ts.map((T) =>
+            normalVarPortfolio(grouped, c, T, window, weights)
           );
+          const vList = outP.map((o) => o.var);
+          const z = outP[0].z;
+          const sigmaP = outP[0].sigmaP;
+
           lines.push(
             `  c=${c.toFixed(3)}(z=${z.toFixed(3)}) | ` +
               Ts.map(
@@ -737,31 +1078,43 @@ export default function App() {
                   )}%)`
               ).join(" | ")
           );
+
           rows.push({
             method: "正态参数法（组合）",
             conf: c.toFixed(3),
-            extra: `z=${z.toFixed(3)} | w=[${wTxt}] | σ_latest=[${sigTxt}]`,
+            extra: `z=${z.toFixed(3)} | σ_p=${sigmaP.toFixed(
+              6
+            )} | window=${window} | w=[${wTxt}]`,
             v1: fmtPct2(vList[0]),
             v2: fmtPct2(vList[1]),
             v3: fmtPct2(vList[2]),
           });
         }
 
+        // 组合 MC：历史组合收益 i.i.d.
         const wVec = ids.map((id) => weights[id]);
         const rpHist = wideClean
-          .map((r) =>
-            ids.reduce((s, id, i) => s + r[id] * wVec[i], 0)
-          )
+          .map((r) => ids.reduce((s, id, i) => s + r[id] * wVec[i], 0))
           .filter(Number.isFinite);
 
-        lines.push("\n— 蒙特卡洛 组合 VaR（历史组合收益 i.i.d.）—");
+        const rpMC = rpHist.length > window ? rpHist.slice(-window) : rpHist;
+        const { mu: muW, sigma: sigmaW } = meanStd(rpMC);
+
+        lines.push(`\n— 蒙特卡洛 组合 VaR（历史组合收益 i.i.d.，${mcMethod === "t_mc" ? "t-MC" : mcMethod}；最近${window}日口径）—`);
+        lines.push(`  μ_w=${muW.toFixed(6)}, σ_w=${sigmaW.toFixed(6)}`);
+
         for (const c of confs) {
+          const z = zFromConf(c);
           const vList = [];
+          let nuFit = null;
+
           for (const T of Ts) {
             setProgressText(`组合 MC：c=${c.toFixed(3)} T=${T} …`);
-            const out = await callWorkerSingle(rpHist, c, T);
+            const out = await callWorkerSingle(rpMC, c, T);
             vList.push(out.var);
+            if (mcMethod === "t_mc") nuFit = out.nu ?? out.df ?? nuFit;
           }
+
           lines.push(
             `  c=${c.toFixed(3)} | ` +
               Ts.map(
@@ -769,24 +1122,31 @@ export default function App() {
                   `T=${T}: ${vList[i].toFixed(6)} (${(vList[i] * 100).toFixed(
                     3
                   )}%)`
-              ).join(" | ")
+              ).join(" | ") +
+              (mcMethod === "t_mc" && nuFit ? ` | ν=${Number(nuFit).toFixed(3)}` : "")
           );
+
           rows.push({
-            method: `MC ${mcMethod}（组合）`,
+            method: `${mcMethod === "t_mc" ? "t-MC" : "MC " + mcMethod}（组合）`,
             conf: c.toFixed(3),
-            extra: `w=[${wTxt}] | K=${sims}`,
+            extra:
+              `z=${z.toFixed(3)} | μ_w=${muW.toFixed(6)} | σ_w=${sigmaW.toFixed(6)}` +
+              (mcMethod === "t_mc" && nuFit ? ` | ν=${Number(nuFit).toFixed(3)}` : "") +
+              ` | window=${window} | w=[${wTxt}] | K=${sims}`,
             v1: fmtPct2(vList[0]),
             v2: fmtPct2(vList[1]),
             v3: fmtPct2(vList[2]),
           });
         }
 
-        const widePrice = alignedWidePrices(grouped).map((row) => ({
+        // 行情图：最近 window 天
+        const widePriceFull = alignedWidePrices(grouped).map((row) => ({
           ...row,
           date: row.date.toISOString().slice(0, 10),
         }));
+
         setPriceSeriesIds(ids);
-        setPriceSeries(widePrice);
+        setPriceSeries(widePriceFull.slice(-window));
       }
 
       setSummary(lines.join("\n"));
@@ -800,24 +1160,54 @@ export default function App() {
   };
 
   const exportResults = () => {
-    const ws = XLSX.utils.json_to_sheet(resultRows);
+    // ===== 1) Excel：Summary + Table + Prices =====
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "VaR");
-    XLSX.writeFile(wb, "VaR_results.xlsx");
+
+    // Summary Sheet（按行写入）
+    const summaryLines = (summary || "")
+      .split("\n")
+      .map((line) => ({ Summary: line }));
+    const wsSummary = XLSX.utils.json_to_sheet(summaryLines);
+    XLSX.utils.book_append_sheet(wb, wsSummary, "Summary");
+
+    // VaR Table Sheet
+    const wsTable = XLSX.utils.json_to_sheet(resultRows || []);
+    XLSX.utils.book_append_sheet(wb, wsTable, "VaR Table");
+
+    // Prices Sheet（最近 w 天，等同于图表数据）
+    const wsPrices = XLSX.utils.json_to_sheet(priceSeries || []);
+    XLSX.utils.book_append_sheet(wb, wsPrices, "Prices(last w days)");
+
+    XLSX.writeFile(wb, "VaR_results_with_summary_prices.xlsx");
   };
 
+
+  // ==================== UI ====================
   return (
     <div className="h-full w-full bg-gradient-to-br from-slate-50 via-white to-slate-100 text-slate-900">
       {/* 顶栏 */}
       <div className="sticky top-0 z-10 bg-white/70 backdrop-blur border-b border-slate-200">
-        <div className="max-w-[1600px] mx-auto px-4 py-3 flex items-center gap-3">
+        <div className="max-w-[1600px] mx-auto px-4 py-3 flex flex-wrap items-center gap-2 sm:gap-3">
           <div className="text-lg font-bold tracking-tight">
             期货 VaR 计算器（Web）
           </div>
-          <div className="text-xs text-slate-500">
-            Normal / t-auto / Bootstrap · 单品种 / 组合
-          </div>
-          <div className="ml-auto flex items-center gap-2">
+
+          <button
+            onClick={() => setShowManual(true)}
+            className="px-3 py-1.5 rounded-lg bg-white border shadow-sm text-sm hover:bg-slate-50 active:scale-95 transition"
+          >
+            用户手册
+          </button>
+
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <button
+              onClick={downloadTemplate}
+              className="px-3 py-1.5 rounded-lg bg-white border shadow-sm text-sm hover:bg-slate-50 active:scale-95 transition"
+              title="下载标准数据模板"
+            >
+              下载标准数据模板
+            </button>
+
             <label className="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-sm cursor-pointer hover:opacity-90 active:scale-95 transition">
               读取 Excel/CSV
               <input
@@ -862,13 +1252,7 @@ export default function App() {
 
             <Card title="2. 列映射（自动识别，可手动修改）">
               <div className="space-y-2">
-                <Field
-                  label={
-                    <span className="inline-flex items-center">
-                      品种ID列 <Help tip={HELP_TEXT.idCol} />
-                    </span>
-                  }
-                >
+                <Field label={<span className="inline-flex items-center">品种ID列 <Help tip={HELP_TEXT.idCol} /></span>}>
                   <select
                     className="w-full border rounded-lg px-2 py-1"
                     value={idCol}
@@ -880,13 +1264,20 @@ export default function App() {
                   </select>
                 </Field>
 
-                <Field
-                  label={
-                    <span className="inline-flex items-center">
-                      日期列 <Help tip={HELP_TEXT.dateCol} />
-                    </span>
-                  }
-                >
+                <Field label={<span className="inline-flex items-center">合约名称列（可选） <Help tip={HELP_TEXT.nameCol} /></span>}>
+                  <select
+                    className="w-full border rounded-lg px-2 py-1"
+                    value={nameCol}
+                    onChange={(e) => setNameCol(e.target.value)}
+                  >
+                    <option value="">（无）</option>
+                    {columns.map((c) => (
+                      <option key={c}>{c}</option>
+                    ))}
+                  </select>
+                </Field>
+
+                <Field label={<span className="inline-flex items-center">日期列 <Help tip={HELP_TEXT.dateCol} /></span>}>
                   <select
                     className="w-full border rounded-lg px-2 py-1"
                     value={dateCol}
@@ -898,13 +1289,7 @@ export default function App() {
                   </select>
                 </Field>
 
-                <Field
-                  label={
-                    <span className="inline-flex items-center">
-                      结算价列 <Help tip={HELP_TEXT.priceCol} />
-                    </span>
-                  }
-                >
+                <Field label={<span className="inline-flex items-center">结算价列 <Help tip={HELP_TEXT.priceCol} /></span>}>
                   <select
                     className="w-full border rounded-lg px-2 py-1"
                     value={priceCol}
@@ -918,15 +1303,10 @@ export default function App() {
               </div>
             </Card>
 
-            <Card title="3.1 共用参数">
+            {/* ✅ 共用参数里包含 σ 窗口 */}
+            <Card title="3. 共用参数">
               <div className="space-y-2">
-                <Field
-                  label={
-                    <span className="inline-flex items-center">
-                      置信度 c1 <Help tip={HELP_TEXT.conf1} />
-                    </span>
-                  }
-                >
+                <Field label={<span className="inline-flex items-center">置信度 c1 <Help tip={HELP_TEXT.conf1} /></span>}>
                   <input
                     type="number"
                     step="0.001"
@@ -938,13 +1318,7 @@ export default function App() {
                   />
                 </Field>
 
-                <Field
-                  label={
-                    <span className="inline-flex items-center">
-                      置信度 c2 <Help tip={HELP_TEXT.conf2} />
-                    </span>
-                  }
-                >
+                <Field label={<span className="inline-flex items-center">置信度 c2 <Help tip={HELP_TEXT.conf2} /></span>}>
                   <input
                     type="number"
                     step="0.001"
@@ -956,13 +1330,7 @@ export default function App() {
                   />
                 </Field>
 
-                <Field
-                  label={
-                    <span className="inline-flex items-center">
-                      短期交易日 T1 <Help tip={HELP_TEXT.T1} />
-                    </span>
-                  }
-                >
+                <Field label={<span className="inline-flex items-center">短期交易日 T1 <Help tip={HELP_TEXT.T1} /></span>}>
                   <input
                     type="number"
                     min="1"
@@ -972,13 +1340,7 @@ export default function App() {
                   />
                 </Field>
 
-                <Field
-                  label={
-                    <span className="inline-flex items-center">
-                      中期交易日 T2 <Help tip={HELP_TEXT.T2} />
-                    </span>
-                  }
-                >
+                <Field label={<span className="inline-flex items-center">中期交易日 T2 <Help tip={HELP_TEXT.T2} /></span>}>
                   <input
                     type="number"
                     min="1"
@@ -988,13 +1350,7 @@ export default function App() {
                   />
                 </Field>
 
-                <Field
-                  label={
-                    <span className="inline-flex items-center">
-                      长期交易日 T3 <Help tip={HELP_TEXT.T3} />
-                    </span>
-                  }
-                >
+                <Field label={<span className="inline-flex items-center">长期交易日 T3 <Help tip={HELP_TEXT.T3} /></span>}>
                   <input
                     type="number"
                     min="1"
@@ -1003,55 +1359,35 @@ export default function App() {
                     onChange={(e) => setT3(+e.target.value)}
                   />
                 </Field>
+
+                <Field label={<span className="inline-flex items-center">σ 窗口（交易日） <Help tip={HELP_TEXT.window} /></span>}>
+                  <input
+                    type="number"
+                    min="5"
+                    max="500"
+                    className="w-full border rounded-lg px-2 py-1"
+                    value={window}
+                    onChange={(e) => setWindow(+e.target.value)}
+                  />
+                </Field>
               </div>
             </Card>
 
-            <Card title="3.2 正态分布特有参数">
-              <Field
-                label={
-                  <span className="inline-flex items-center">
-                    σ 窗口（交易日） <Help tip={HELP_TEXT.window} />
-                  </span>
-                }
-              >
-                <input
-                  type="number"
-                  min="5"
-                  max="500"
-                  className="w-full border rounded-lg px-2 py-1"
-                  value={window}
-                  onChange={(e) => setWindow(+e.target.value)}
-                />
-              </Field>
-            </Card>
-
-            <Card title="3.3 Monte Carlo 特有参数">
+            <Card title="4. Monte Carlo 参数">
               <div className="space-y-2">
-                <Field
-                  label={
-                    <span className="inline-flex items-center">
-                      MC 方法 <Help tip={HELP_TEXT.mcMethod} />
-                    </span>
-                  }
-                >
+                <Field label={<span className="inline-flex items-center">MC 方法 <Help tip={HELP_TEXT.mcMethod} /></span>}>
                   <select
                     className="w-full border rounded-lg px-2 py-1"
                     value={mcMethod}
                     onChange={(e) => setMcMethod(e.target.value)}
                   >
                     <option value="normal">Normal MC（正态）</option>
-                    <option value="t_auto">t-MC（厚尾，ν自动拟合）</option>
+                    <option value="t_mc">t-MC（厚尾，ν自动拟合）</option>
                     <option value="bootstrap">Bootstrap MC（历史重采样）</option>
                   </select>
                 </Field>
 
-                <Field
-                  label={
-                    <span className="inline-flex items-center">
-                      模拟次数 K <Help tip={HELP_TEXT.sims} />
-                    </span>
-                  }
-                >
+                <Field label={<span className="inline-flex items-center">模拟次数 K <Help tip={HELP_TEXT.sims} /></span>}>
                   <input
                     type="number"
                     min="1000"
@@ -1062,13 +1398,7 @@ export default function App() {
                   />
                 </Field>
 
-                <Field
-                  label={
-                    <span className="inline-flex items-center">
-                      t df 搜索上限 <Help tip={HELP_TEXT.dfMax} />
-                    </span>
-                  }
-                >
+                <Field label={<span className="inline-flex items-center">t ν 搜索上限 <Help tip={HELP_TEXT.dfMax} /></span>}>
                   <input
                     type="number"
                     min="10"
@@ -1081,13 +1411,7 @@ export default function App() {
               </div>
             </Card>
 
-            <Card
-              title={
-                <span className="inline-flex items-center">
-                  4. 计算模式 <Help tip={HELP_TEXT.mode} />
-                </span>
-              }
-            >
+            <Card title={<span className="inline-flex items-center">5. 计算模式 <Help tip={HELP_TEXT.mode} /></span>}>
               <div className="space-y-3">
                 <div className="flex gap-2">
                   <button
@@ -1115,20 +1439,16 @@ export default function App() {
                 </div>
 
                 {mode === "single" && (
-                  <Field
-                    label={
-                      <span className="inline-flex items-center">
-                        单品种选择 <Help tip={HELP_TEXT.singleId} />
-                      </span>
-                    }
-                  >
+                  <Field label={<span className="inline-flex items-center">单品种选择 <Help tip={HELP_TEXT.singleId} /></span>}>
                     <select
                       className="w-full border rounded-lg px-2 py-1"
                       value={singleId}
                       onChange={(e) => setSingleId(e.target.value)}
                     >
                       {idsAll.map((id) => (
-                        <option key={id}>{id}</option>
+                        <option key={id}>
+                          {idToName[id] ? `${id}（${idToName[id]}）` : id}
+                        </option>
                       ))}
                     </select>
                   </Field>
@@ -1160,19 +1480,15 @@ export default function App() {
                                 );
                               }}
                             />
-                            {id}
+                            <span>
+                              {id}{idToName[id] ? `（${idToName[id]}）` : ""}
+                            </span>
                           </label>
                         );
                       })}
                     </div>
 
-                    <Field
-                      label={
-                        <span className="inline-flex items-center">
-                          组合权重（可选） <Help tip={HELP_TEXT.weightsText} />
-                        </span>
-                      }
-                    >
+                    <Field label={<span className="inline-flex items-center">组合权重（可选） <Help tip={HELP_TEXT.weightsText} /></span>}>
                       <input
                         type="text"
                         placeholder="CFI=0.7,RBFI=0.3"
@@ -1201,22 +1517,7 @@ export default function App() {
           <div className="col-span-12 lg:col-span-8 xl:col-span-9 flex flex-col gap-4">
             <Card title="结果输出（文本摘要）">
               <AnimatePresence mode="wait">
-                {loading ? (
-                  <motion.div
-                    key="loading"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    className="h-full flex items-center justify-center text-slate-600"
-                  >
-                    <div className="flex flex-col items-center gap-3">
-                      <div className="h-10 w-10 rounded-full border-4 border-slate-300 border-t-slate-900 animate-spin" />
-                      <div className="text-sm">
-                        {progressText || "Monte Carlo 计算中，请稍候…"}
-                      </div>
-                    </div>
-                  </motion.div>
-                ) : (
+                {!loading ? (
                   <motion.pre
                     key="summary"
                     initial={{ opacity: 0 }}
@@ -1226,6 +1527,10 @@ export default function App() {
                   >
                     {summary || "请先读取文件并设置参数。"}
                   </motion.pre>
+                ) : (
+                  <motion.div key="placeholder" className="text-slate-500 text-sm">
+                    计算中…结果将自动更新
+                  </motion.div>
                 )}
               </AnimatePresence>
             </Card>
@@ -1250,7 +1555,7 @@ export default function App() {
                     >
                       <td className="py-2">{r.method}</td>
                       <td>{r.conf}</td>
-                      <td className="max-w-[260px] truncate" title={r.extra}>
+                      <td className="max-w-[360px] truncate" title={r.extra}>
                         {r.extra}
                       </td>
                       <td>{r.v1}</td>
@@ -1276,7 +1581,7 @@ export default function App() {
               <div className="h-[360px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={priceSeries}>
-                    <XAxis dataKey="date" hide />
+                    <XAxis dataKey="date" tickMargin={8} minTickGap={18} tick={{ fontSize: 12 }} />
                     <YAxis domain={["auto", "auto"]} />
                     <Tooltip />
                     <Legend />
@@ -1287,7 +1592,7 @@ export default function App() {
                         dataKey={id}
                         dot={false}
                         connectNulls={true}
-                        name={id}
+                        name={idToName[id] ? `${id}（${idToName[id]}）` : id}
                         stroke={PALETTE[idx % PALETTE.length]}
                         strokeWidth={2}
                       />
@@ -1296,12 +1601,93 @@ export default function App() {
                 </ResponsiveContainer>
               </div>
               <div className="text-xs text-slate-500 mt-2">
-                单品种显示单线；多品种按品种分线展示价格走势（0 值/缺失已前向填充）。
+                仅展示最近 {window} 个交易日的价格走势（0 值/缺失已前向填充）。
               </div>
             </Card>
           </div>
         </div>
       </div>
+
+      {/* 进度遮罩：前端阻塞 */}
+      <ProgressOverlay open={loading} text={progressText || "Monte Carlo 计算中…"} />
+
+      {/* 用户手册弹窗 */}
+      <AnimatePresence>
+        {showManual && (
+          <motion.div
+            className="fixed inset-0 z-[9998] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setShowManual(false)}
+          >
+            <motion.div
+              className="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-4xl max-h-[85vh] flex flex-col overflow-hidden"
+              initial={{ scale: 0.96, opacity: 0, y: 8 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.96, opacity: 0, y: 8 }}
+              transition={{ duration: 0.2 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* ✅ 固定头部 */}
+              <div className="sticky top-0 z-20 bg-white/95 backdrop-blur border-b border-slate-200 px-6 py-3 flex items-center">
+                <div className="text-lg font-bold">用户手册</div>
+
+                <div className="ml-auto flex items-center gap-2">
+                  <button
+                    onClick={downloadManualPDF}
+                    className="px-3 py-1.5 rounded-lg text-sm border hover:bg-slate-50 active:scale-95 transition"
+                  >
+                    下载 PDF
+                  </button>
+
+                  <button
+                    onClick={() => setShowManual(false)}
+                    className="px-3 py-1.5 rounded-lg text-sm border hover:bg-slate-50 active:scale-95 transition"
+                  >
+                    关闭
+                  </button>
+                </div>
+              </div>
+
+              {/* ✅ 只滚动正文 */}
+              <div ref={manualBodyRef} className="manual-body flex-1 overflow-auto px-6 py-4">
+                <div className="text-slate-900">
+                  <ReactMarkdown
+                    remarkPlugins={[remarkMath]}
+                    rehypePlugins={[rehypeKatex]}
+                    components={{
+                      h1: (p) => <h1 className="text-2xl font-bold mt-2 mb-4" {...p} />,
+                      h2: (p) => <h2 className="text-xl font-semibold mt-6 mb-3" {...p} />,
+                      h3: (p) => <h3 className="text-lg font-semibold mt-4 mb-2" {...p} />,
+                      p: (p) => <p className="text-sm leading-7 my-2 text-slate-800" {...p} />,
+                      ul: (p) => <ul className="list-disc pl-5 my-2 space-y-1 text-sm" {...p} />,
+                      ol: (p) => <ol className="list-decimal pl-5 my-2 space-y-1 text-sm" {...p} />,
+                      li: (p) => <li className="leading-7" {...p} />,
+                      blockquote: (p) => (
+                        <blockquote className="border-l-4 border-slate-300 pl-3 py-1 my-3 text-slate-600 bg-slate-50 rounded-r" {...p} />
+                      ),
+                      code: ({ inline, className, children, ...props }) =>
+                        inline ? (
+                          <code className="px-1 py-0.5 rounded bg-slate-100 text-slate-900 text-[0.9em]" {...props}>
+                            {children}
+                          </code>
+                        ) : (
+                          <pre className="bg-slate-900 text-slate-50 rounded-xl p-3 overflow-auto text-xs my-3">
+                            <code className={className} {...props}>{children}</code>
+                          </pre>
+                        ),
+                    }}
+                  >
+                    {USER_MANUAL_MD}
+                  </ReactMarkdown>
+                </div>
+              </div>
+            </motion.div>
+
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
