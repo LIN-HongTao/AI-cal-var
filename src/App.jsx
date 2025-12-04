@@ -1068,7 +1068,6 @@ export default function App() {
 
     let lines = [];
     let rows = [];
-    lines.push(`========== 计算结果 ==========\n`);
     lines.push(
       `共用参数： c1=${conf1.toFixed(3)}, c2=${conf2.toFixed(
         3
