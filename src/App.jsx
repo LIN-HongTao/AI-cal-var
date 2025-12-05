@@ -763,6 +763,174 @@ const ProgressOverlay = ({ open, text = "计算中…" }) => {
   );
 };
 
+const SymbolSelectorModal = ({
+  open,
+  onClose,
+  mode,
+  ids,
+  idToName,
+  singleId,
+  setSingleId,
+  portfolioIds,
+  setPortfolioIds,
+  selectorSearch,
+  setSelectorSearch,
+}) => {
+  if (!open) return null;
+
+  const inputRef = React.useRef(null);
+  const isComposingRef = React.useRef(false);
+
+  React.useEffect(() => {
+    if (open) requestAnimationFrame(() => inputRef.current?.focus());
+  }, [open]);
+
+  const q = selectorSearch.trim();
+  const tokens = q ? q.toLowerCase().split(/\s+/).filter(Boolean) : [];
+
+  const filtered =
+    tokens.length === 0
+      ? ids
+      : ids.filter((id) => {
+          const name = idToName[id] || "";
+          const hay = (id + " " + name).toLowerCase();
+          return tokens.every((t) => hay.includes(t));
+        });
+
+  const togglePortfolio = (id) => {
+    setPortfolioIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="bg-white w-[92vw] max-w-3xl rounded-lg shadow-lg p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="text-lg font-semibold">
+            {mode === "single" ? "选择单品种" : "选择组合品种"}
+          </div>
+          <button
+            className="px-2 py-1 rounded bg-gray-100 hover:bg-gray-200"
+            onClick={onClose}
+            onMouseDown={(e) => e.preventDefault()}
+          >
+            关闭
+          </button>
+        </div>
+
+        <input
+          ref={inputRef}
+          value={selectorSearch}
+          placeholder="搜索品种代码/合约名称（支持中文）"
+          className="border rounded px-2 py-1 w-full"
+          onCompositionStart={() => {
+            isComposingRef.current = true;
+          }}
+          onCompositionEnd={(e) => {
+            // 组合结束，允许后续正常 onChange
+            isComposingRef.current = false;
+            // 再补一次最终值（有些输入法不会在 end 后再触发 change）
+            setSelectorSearch(e.target.value);
+          }}
+          onChange={(e) => {
+            // ✅ 组合态也要更新 state，让中文拼音能上屏
+            setSelectorSearch(e.target.value);
+          }}
+        />
+
+
+        {mode === "portfolio" && (
+          <div className="flex gap-2 text-sm">
+            <button
+              className="px-2 py-1 rounded bg-gray-100 hover:bg-gray-200"
+              onClick={() => setPortfolioIds([])}
+              onMouseDown={(e) => e.preventDefault()}
+            >
+              全不选
+            </button>
+            <button
+              className="px-2 py-1 rounded bg-gray-100 hover:bg-gray-200"
+              onClick={() => setPortfolioIds(ids.slice())}
+              onMouseDown={(e) => e.preventDefault()}
+            >
+              全选
+            </button>
+            <div className="text-gray-500 self-center">
+              已选 {portfolioIds.length} / {ids.length}
+            </div>
+          </div>
+        )}
+
+        <div className="border rounded p-2 max-h-[60vh] overflow-auto space-y-1">
+          {filtered.length === 0 && (
+            <div className="text-sm text-gray-500">没有匹配的品种</div>
+          )}
+
+          {mode === "single" &&
+            filtered.map((id) => {
+              const label = idToName[id]
+                ? `${id}（${idToName[id]}）`
+                : id;
+              const active = singleId === id;
+              return (
+                <button
+                  key={id}
+                  className={clsx(
+                    "w-full text-left px-2 py-1 rounded hover:bg-gray-50",
+                    active && "bg-blue-50 border border-blue-200"
+                  )}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    setSingleId(id);
+                    onClose();
+                  }}
+                >
+                  {label}
+                </button>
+              );
+            })}
+
+          {mode === "portfolio" &&
+            filtered.map((id) => {
+              const label = idToName[id]
+                ? `${id}（${idToName[id]}）`
+                : id;
+              const checked = portfolioIds.includes(id);
+              return (
+                <label
+                  key={id}
+                  className="flex items-center gap-2 px-2 py-1 rounded hover:bg-gray-50 cursor-pointer"
+                  onMouseDown={(e) => e.preventDefault()}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => togglePortfolio(id)}
+                  />
+                  <span>{label}</span>
+                </label>
+              );
+            })}
+        </div>
+
+        {mode === "portfolio" && (
+          <div className="flex justify-end">
+            <button
+              className="px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={onClose}
+            >
+              确认选择
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+
 // ==================== 主 App ====================
 export default function App() {
   const workerRef = useRef(null);
@@ -800,6 +968,11 @@ export default function App() {
   const [selectorOpen, setSelectorOpen] = useState(false);
   const [selectorSearch, setSelectorSearch] = useState("");
 
+  // 权重弹窗（多品种）
+  const [weightsOpen, setWeightsOpen] = useState(false);
+  const [weightsById, setWeightsById] = useState({});
+
+
   const [showManual, setShowManual] = useState(false);
   const [openSection, setOpenSection] = useState("data");
 
@@ -810,6 +983,9 @@ export default function App() {
 
   const [priceSeries, setPriceSeries] = useState([]);
   const [priceSeriesIds, setPriceSeriesIds] = useState([]);
+
+  const [lastCalcMode, setLastCalcMode] = useState("single"); // 记录上一次“开始计算”的模式
+
   const [idToName, setIdToName] = useState({});
 
   // ============ 标准模板下载（含3行样例） ============
@@ -979,31 +1155,44 @@ export default function App() {
     }
   }, [idsAll.join("|")]);
 
+  // 当多品种选择变化时初始化/清理权重
+  React.useEffect(() => {
+    if (mode !== "portfolio") return;
+    setWeightsById((prev) => {
+      const next = { ...prev };
+      portfolioIds.forEach((id) => {
+        if (next[id] == null || !Number.isFinite(next[id])) next[id] = 1;
+      });
+      Object.keys(next).forEach((id) => {
+        if (!portfolioIds.includes(id)) delete next[id];
+      });
+      return next;
+    });
+  }, [mode, portfolioIds.join("|")]);
+
+
 
   const parseWeights = (ids) => {
-    if (!weightsText.trim()) {
+    if (!ids.length) return {};
+
+    const arr = ids.map((id) => toNumber(weightsById[id]));
+    const hasAny = arr.some(Number.isFinite);
+
+    if (!hasAny) {
       const w = 1 / ids.length;
       return Object.fromEntries(ids.map((id) => [id, w]));
     }
-    try {
-      const parts = weightsText
-        .split(",")
-        .map((x) => x.trim())
-        .filter(Boolean);
-      const w = {};
-      for (const p of parts) {
-        const [k, v] = p.split("=");
-        if (ids.includes(k.trim())) w[k.trim()] = Number(v);
-      }
-      const s = Object.values(w).reduce((a, b) => a + b, 0);
-      if (s <= 0) throw new Error();
-      const norm = {};
-      ids.forEach((id) => (norm[id] = (w[id] ?? 0) / s));
-      return norm;
-    } catch {
-      const w = 1 / ids.length;
-      return Object.fromEntries(ids.map((id) => [id, w]));
+
+    if (arr.some((x) => !Number.isFinite(x))) {
+      throw new Error("有品种权重为空或非数字，请在权重弹窗中补全");
     }
+
+    const s = arr.reduce((a, b) => a + b, 0);
+    if (s <= 0) throw new Error("权重和必须大于 0");
+
+    const norm = {};
+    ids.forEach((id, i) => (norm[id] = arr[i] / s));
+    return norm;
   };
 
   const fmtPct2 = (v) =>
@@ -1226,6 +1415,7 @@ export default function App() {
 
         setPriceSeriesIds([cid]);
         setPriceSeries(fullSeries.slice(-window));
+        setLastCalcMode(mode);
       } else {
         // ==================== portfolio 模式 ====================
         let ids = portfolioIds;
@@ -1349,6 +1539,7 @@ export default function App() {
 
         setPriceSeriesIds(ids);
         setPriceSeries(widePriceFull.slice(-window));
+        setLastCalcMode(mode);
       }
 
       setSummary(lines.join("\n"));
@@ -1361,146 +1552,99 @@ export default function App() {
     }
   };
 
-  const SymbolSelectorModal = ({
+  const WeightsModal = ({
     open,
     onClose,
-    mode,
     ids,
     idToName,
-    singleId,
-    setSingleId,
-    portfolioIds,
-    setPortfolioIds,
+    weightsById,
+    setWeightsById,
   }) => {
     if (!open) return null;
 
-    const q = selectorSearch.trim().toLowerCase();
-    const filtered = !q
-      ? ids
-      : ids.filter((id) => {
-          const name = (idToName[id] || "").toLowerCase();
-          return id.toLowerCase().includes(q) || name.includes(q);
-        });
+    const setOne = (id, v) => {
+      const n = Number(v);
+      setWeightsById((prev) => ({
+        ...prev,
+        [id]: Number.isFinite(n) ? n : "",
+      }));
+    };
 
-    const togglePortfolio = (id) => {
-      setPortfolioIds((prev) =>
-        prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-      );
+    const setEqual = () => {
+      const next = {};
+      ids.forEach((id) => (next[id] = 1));
+      setWeightsById(next);
     };
 
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-        <div className="bg-white w-[92vw] max-w-3xl rounded-lg shadow-lg p-4 space-y-3">
+        <div className="bg-white w-[92vw] max-w-2xl rounded-lg shadow-lg p-4 space-y-3">
           <div className="flex items-center justify-between">
-            <div className="text-lg font-semibold">
-              {mode === "single" ? "选择单品种" : "选择组合品种"}
-            </div>
+            <div className="text-lg font-semibold">设置组合权重</div>
             <button
               className="px-2 py-1 rounded bg-gray-100 hover:bg-gray-200"
               onClick={onClose}
+              onMouseDown={(e) => e.preventDefault()}
             >
               关闭
             </button>
           </div>
 
-          {/* 搜索框 */}
-          <input
-            value={selectorSearch}
-            onChange={(e) => setSelectorSearch(e.target.value)}
-            placeholder="搜索品种代码或名称…"
-            className="border rounded px-2 py-1 w-full"
-          />
-
-          {/* 多品种操作按钮 */}
-          {mode === "portfolio" && (
-            <div className="flex gap-2 text-sm">
-              <button
-                className="px-2 py-1 rounded bg-gray-100 hover:bg-gray-200"
-                onClick={() => setPortfolioIds([])}
-              >
-                全不选
-              </button>
-              <button
-                className="px-2 py-1 rounded bg-gray-100 hover:bg-gray-200"
-                onClick={() => setPortfolioIds(ids.slice())}
-              >
-                全选
-              </button>
-              <div className="text-gray-500 self-center">
-                已选 {portfolioIds.length} / {ids.length}
-              </div>
-            </div>
-          )}
-
-          {/* 列表 */}
-          <div className="border rounded p-2 max-h-[60vh] overflow-auto space-y-1">
-            {filtered.length === 0 && (
-              <div className="text-sm text-gray-500">没有匹配的品种</div>
-            )}
-
-            {mode === "single" &&
-              filtered.map((id) => {
-                const label = idToName[id]
-                  ? `${id}（${idToName[id]}）`
-                  : id;
-                const active = singleId === id;
-                return (
-                  <button
-                    key={id}
-                    className={clsx(
-                      "w-full text-left px-2 py-1 rounded hover:bg-gray-50",
-                      active && "bg-blue-50 border border-blue-200"
-                    )}
-                    onClick={() => {
-                      setSingleId(id);
-                      onClose();
-                    }}
-                  >
-                    {label}
-                  </button>
-                );
-              })}
-
-            {mode === "portfolio" &&
-              filtered.map((id) => {
-                const label = idToName[id]
-                  ? `${id}（${idToName[id]}）`
-                  : id;
-                const checked = portfolioIds.includes(id);
-                return (
-                  <label
-                    key={id}
-                    className="flex items-center gap-2 px-2 py-1 rounded hover:bg-gray-50 cursor-pointer"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => togglePortfolio(id)}
-                    />
-                    <span>{label}</span>
-                  </label>
-                );
-              })}
+          <div className="text-sm text-gray-600">
+            当前已选 {ids.length} 个品种
           </div>
 
-          {/* 底部 */}
-          <div className="flex justify-end gap-2">
-            {mode === "portfolio" && (
-              <button
-                className="px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"
-                onClick={onClose}
-              >
-                确认选择
-              </button>
-            )}
+          <div className="flex gap-2 text-sm">
+            <button
+              className="px-2 py-1 rounded bg-gray-100 hover:bg-gray-200"
+              onClick={setEqual}
+              onMouseDown={(e) => e.preventDefault()}
+            >
+              等权(全部=1)
+            </button>
+            <button
+              className="px-2 py-1 rounded bg-gray-100 hover:bg-gray-200"
+              onClick={() => setWeightsById({})}
+              onMouseDown={(e) => e.preventDefault()}
+            >
+              清空
+            </button>
+          </div>
+
+          <div className="border rounded p-2 max-h-[60vh] overflow-auto space-y-2">
+            {ids.map((id) => {
+              const label = idToName[id]
+                ? `${id}（${idToName[id]}）`
+                : id;
+              const val = weightsById[id] ?? "";
+              return (
+                <div key={id} className="flex items-center gap-2">
+                  <div className="flex-1 text-sm">{label}</div>
+                  <input
+                    className="border rounded px-2 py-1 w-28 text-sm"
+                    value={val}
+                    onChange={(e) => setOne(id, e.target.value)}
+                    placeholder="权重"
+                  />
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="flex justify-end">
+            <button
+              className="px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"
+              onClick={onClose}
+              onMouseDown={(e) => e.preventDefault()}
+            >
+              确认
+            </button>
           </div>
         </div>
       </div>
     );
   };
-
-
-  // ==================== UI ====================
+// ==================== UI ====================
   return (
     <div className="h-full w-full bg-gradient-to-br from-slate-50 via-white to-slate-100 text-slate-900">
       {/* 顶栏 */}
@@ -1911,15 +2055,32 @@ export default function App() {
                       </div>
                     </div>
 
-                    <label className="block">
-                      权重(可空，空则等权，各品种用空格/逗号分隔):
-                      <input
-                        value={weightsText}
-                        onChange={(e) => setWeightsText(e.target.value)}
-                        className="border rounded px-2 py-1 w-full"
-                        placeholder="例如：0.2, 0.3, 0.5"
-                      />
-                    </label>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        className="px-3 py-1 rounded bg-gray-200 hover:bg-gray-300"
+                        onClick={() => setWeightsOpen(true)}
+                        disabled={portfolioIds.length === 0}
+                      >
+                        设置权重
+                      </button>
+
+                      <div className="text-gray-600 text-sm">
+                        权重摘要：
+                        {portfolioIds.length === 0
+                          ? "未选择品种"
+                          : portfolioIds
+                              .map((id) => {
+                                const w = weightsById[id];
+                                const show = Number.isFinite(toNumber(w))
+                                  ? Number(w).toFixed(3)
+                                  : "—";
+                                return `${id}:${show}`;
+                              })
+                              .slice(0, 6)
+                              .join(", ") +
+                            (portfolioIds.length > 6 ? " ..." : "")}
+                      </div>
+                    </div>
                   </div>
                 )}
 
@@ -2004,36 +2165,44 @@ export default function App() {
             </Card>
 
             <Card title="行情走势图（价格）">
-              <div ref={chartRef} className="h-[260px] sm:h-[320px] lg:h-[360px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={priceSeries}>
-                    <XAxis
-                      dataKey="date"
-                      tickMargin={8}
-                      minTickGap={18}
-                      tick={{ fontSize: 10 }}
-                    />
-                    <YAxis domain={["auto", "auto"]} />
-                    <Tooltip />
-                    <Legend />
-                    {priceSeriesIds.map((id, idx) => (
-                      <Line
-                        key={id}
-                        type="monotone"
-                        dataKey={id}
-                        dot={false}
-                        connectNulls={true}
-                        name={idToName[id] ? `${id}（${idToName[id]}）` : id}
-                        stroke={PALETTE[idx % PALETTE.length]}
-                        strokeWidth={2}
-                      />
-                    ))}
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="text-xs text-slate-500 mt-2">
-                仅展示最近 {window} 个交易日的价格走势（0 值/缺失已前向填充）。
-              </div>
+              {lastCalcMode === "portfolio" && priceSeriesIds.length > 8 ? (
+                <div className="border rounded p-4 text-sm text-slate-600 bg-slate-50">
+                  已选择 {priceSeriesIds.length} 个品种，超过 8 个。为保证展示清晰度，价格走势图已自动隐藏。请将品种数量减少到 8 个及以下再查看价格图。
+                </div>
+              ) : (
+                <>
+                  <div ref={chartRef} className="h-[260px] sm:h-[320px] lg:h-[360px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={priceSeries}>
+                        <XAxis
+                          dataKey="date"
+                          tickMargin={8}
+                          minTickGap={18}
+                          tick={{ fontSize: 10 }}
+                        />
+                        <YAxis domain={["auto", "auto"]} />
+                        <Tooltip />
+                        <Legend />
+                        {priceSeriesIds.map((id, idx) => (
+                          <Line
+                            key={id}
+                            type="monotone"
+                            dataKey={id}
+                            dot={false}
+                            connectNulls={true}
+                            name={idToName[id] ? `${id}（${idToName[id]}）` : id}
+                            stroke={PALETTE[idx % PALETTE.length]}
+                            strokeWidth={2}
+                          />
+                        ))}
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div className="text-xs text-slate-500 mt-2">
+                    仅展示最近 {window} 个交易日的价格走势（0 值/缺失已前向填充）。
+                  </div>
+                </>
+              )}
             </Card>
           </div>
         </div>
@@ -2164,7 +2333,18 @@ export default function App() {
       setSingleId={setSingleId}
       portfolioIds={portfolioIds}
       setPortfolioIds={setPortfolioIds}
+      selectorSearch={selectorSearch}
+      setSelectorSearch={setSelectorSearch}
     />
+    <WeightsModal
+      open={weightsOpen}
+      onClose={() => setWeightsOpen(false)}
+      ids={portfolioIds}
+      idToName={idToName}
+      weightsById={weightsById}
+      setWeightsById={setWeightsById}
+    />
+
     </div>
   );
 }
