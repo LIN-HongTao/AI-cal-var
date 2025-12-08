@@ -373,21 +373,24 @@ const HELP_TEXT = {
 };
 
 // ==================== KaTeX 渲染器 ====================
+// ==================== KaTeX 渲染器（用于问号帮助） ====================
 const renderTip = (tip) => {
-  const parts = String(tip)
-    .split(/(\\$\\$[\\s\\S]+?\\$\\$|\\$[^$]+\\$)/g)
-    .filter(Boolean);
-
-  return parts.map((p, i) => {
-    if (p.startsWith("$$") && p.endsWith("$$")) {
-      return <BlockMath key={i}>{p.slice(2, -2)}</BlockMath>;
-    }
-    if (p.startsWith("$") && p.endsWith("$")) {
-      return <InlineMath key={i}>{p.slice(1, -1)}</InlineMath>;
-    }
-    return <span key={i}>{p}</span>;
-  });
+  return (
+    <div className="text-sm leading-relaxed whitespace-pre-wrap">
+      <ReactMarkdown
+        remarkPlugins={[remarkMath]}
+        rehypePlugins={[rehypeKatex]}
+        components={{
+          p: ({ children }) => <p className="my-1">{children}</p>,
+          li: ({ children }) => <li className="ml-4 list-disc">{children}</li>,
+        }}
+      >
+        {String(tip)}
+      </ReactMarkdown>
+    </div>
+  );
 };
+
 
 // ==================== Portal + 防越界 Help 组件 ====================
 const Help = ({ tip }) => {
