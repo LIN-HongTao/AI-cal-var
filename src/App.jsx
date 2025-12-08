@@ -174,9 +174,9 @@ $$
 拟合时搜索区间为 $[2,\\nu_{\\max}]$。$\\nu$ 越小尾越厚；$\\nu\\to\\infty$ 逼近正态。
 
 **如何设置：**
-- 默认 $\\nu_{\\max}=60$：适用于大多数日频期货（有厚尾但不会极端到需要很大上限）。
-- 若样本 **很厚尾/危机期数据多**：可用 $\\nu_{\\max}=30\\sim 60$，避免无意义地拟合到近正态。
-- 若品种**非常稳定、尾部接近正态**：可提高到 $\\nu_{\\max}=100\\sim 200$，让拟合有空间趋近正态。
+- 默认 $\\nu_{\\max}=15$：适度厚尾/更保守。
+- 若样本 **厚尾明显/希望更保守**：可用 $\\nu_{\\max}=5$。
+- $\\nu_{\\max}$ 越小尾越厚、VaR 越保守；越大越接近正态。
 - 样本量较小（<100）时不宜设置太大（建议 $\\le 60$），否则拟合不稳。
 
 ### 5.3 Bootstrap MC（历史重采样）
@@ -354,12 +354,12 @@ const HELP_TEXT = {
   sims:
     "模拟次数 $K$。每次生成 $K$ 条未来 $T$ 天收益路径，取左尾分位作为 VaR。$K$ 越大结果越稳定，但计算更久。",
   dfMax:
-    "t 分布自由度搜索上限 $\\nu_{max}$。拟合区间为 $[2,\\nu_{max}]$。\n" +
+    "t 分布自由度搜索上限 $\nu_{max}$。拟合区间为 $[2,\nu_{max}]$。\n" +
     "推荐设置：\n" +
-    "• 常规日频期货：$\\nu_{max}=60$（默认）。\n" +
-    "• 明显厚尾/危机期样本多：30~60。\n" +
-    "• 尾部接近正态、样本很长：100~200。\n" +
-    "• 样本较短（<100），不建议超过 60。",
+    "• 常规日频期货：$\nu_{max}=15$（默认，适度厚尾/更保守）。\n" +
+    "• 厚尾明显/希望更保守：5。\n" +
+    "• 分布接近正态：60。\n" +
+    "• 样本较短（<100）时不宜设太大（建议 ≤60）。",
   mode:
     "计算模式：\n" +
     "• 单品种：对某一品种计算 VaR。\n" +
@@ -372,7 +372,6 @@ const HELP_TEXT = {
     "组合权重向量输入。格式：“品种=权重,品种=权重…”。若不填则等权。程序会自动归一化，使权重和为 1。",
 };
 
-// ==================== KaTeX 渲染器 ====================
 // ==================== KaTeX 渲染器（用于问号帮助） ====================
 const renderTip = (tip) => {
   return (
@@ -960,7 +959,7 @@ export default function App() {
 
   const [mcMethod, setMcMethod] = useState("normal"); // normal | t_mc | bootstrap
   const [sims, setSims] = useState(200000);
-  const [dfMax, setDfMax] = useState(60);
+  const [dfMax, setDfMax] = useState(15);
 
   const [mode, setMode] = useState("single");
   const [singleId, setSingleId] = useState("");
@@ -1299,8 +1298,9 @@ export default function App() {
       )} | T1/T2/T3=${T1}/${T2}/${T3} 交易日 | σ窗口=${window}日`
     );
     lines.push(
-      `Monte Carlo： 方法=${mcMethod === "t_mc" ? "t-MC" : mcMethod
-      } | K=${sims} | ν_max=${dfMax} | 口径=最近${window}日`
+      `Monte Carlo：方法=${
+        mcMethod === "t_mc" ? "t-MC" : mcMethod === "normal" ? "Normal MC" : "Bootstrap"
+      } | K=${sims}${mcMethod === "t_mc" ? ` | ν_max=${dfMax}` : ""} | 口径=最近${window}日`
     );
     lines.push("");
 
@@ -1335,8 +1335,8 @@ export default function App() {
         lines.push(
           `MC口径(最近${window}日)：μ_w=${muW.toFixed(6)}, σ_w=${sigmaW.toFixed(6)}`
         );
-        lines.push(`最新 σ_latest(窗口) = ${sigmaLatest.toFixed(6)}\n`);
-
+        lines.push(`最新 σ_w(窗口) = ${sigmaLatest.toFixed(6)}\n`);
+        
         // 正态参数
         lines.push("— 正态参数 VaR（收益率口径）—");
         for (const c of confs) {
@@ -1354,7 +1354,7 @@ export default function App() {
           rows.push({
             method: `正态参数法（${cid}）`,
             conf: c.toFixed(3),
-            extra: `z=${z.toFixed(3)} | σ_latest=${sigmaLatest.toFixed(
+            extra: `z=${z.toFixed(3)} | σ_w=${sigmaLatest.toFixed(
               6
             )} | window=${window}`,
             v1: fmtPct2(vList[0]),
@@ -1542,7 +1542,6 @@ export default function App() {
 
         setPriceSeriesIds(ids);
         setPriceSeries(widePriceFull.slice(-window));
-        setLastCalcMode(mode);
       }
 
       setSummary(lines.join("\n"));
@@ -1954,6 +1953,7 @@ export default function App() {
                   />
                 </Field>
 
+                {mcMethod === "t_mc" && (
                 <Field
                   label={
                     <span className="inline-flex items-center">
@@ -1961,15 +1961,17 @@ export default function App() {
                     </span>
                   }
                 >
-                  <input
-                    type="number"
-                    min="10"
-                    max="300"
+                  <select
                     className="w-full border rounded-lg px-2 py-1"
                     value={dfMax}
                     onChange={(e) => setDfMax(+e.target.value)}
-                  />
+                  >
+                    <option value={5}>5（尾部很厚/更保守）</option>
+                    <option value={15}>15（中等厚尾/中性）</option>
+                    <option value={60}>60（接近正态/较薄尾）</option>
+                  </select>
                 </Field>
+              )}
               </div>
             </SectionCard>
 
