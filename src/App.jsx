@@ -15,7 +15,6 @@ import {
 import clsx from "clsx";
 
 import "katex/dist/katex.css";
-import { InlineMath, BlockMath } from "react-katex";
 
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
@@ -151,7 +150,7 @@ $$
 ### 5.1 Normal MC（正态 i.i.d.）
 最近 $w$ 天估计：
 $$
-r \\sim \\mathcal N(\\mu_w,\\sigma_w^2)
+r \\sim \\mathcal N(0,\\sigma_w^2)
 $$
 然后独立生成 $K$ 条 $T$ 天路径。
 
@@ -162,9 +161,9 @@ $$
 ### 5.2 t-MC（厚尾 t 分布 + ν 拟合）
 最近 $w$ 天拟合 t 分布：
 $$
-r \\sim t_{\\nu_w}(\\mu_w,\\sigma_w)
+r \\sim t_{\\nu_w}(0,\\sigma_w)
 $$
-程序自动拟合自由度 $\\nu_w$（输出到结果中）。
+程序自动拟合自由度 $\\nu_w$（输出到结果中），均值默认取 0。
 
 **优点**：尾部更厚，适合极端风险  
 **缺点**：拟合依赖样本量、计算更慢  
@@ -210,7 +209,7 @@ $$
 
 ### 6.2 Normal MC（正态 Monte Carlo）
 **核心假设**：收益正态 i.i.d.；用模拟代替闭式公式。  
-**口径**：最近 $w$ 天估 $\\mu_w,\\sigma_w$ 后模拟未来路径。
+**口径**：最近 $w$ 天估 $\\sigma_w$ 后模拟未来路径（均值默认取 0）。
 
 **适用场景**
 - **希望保留均值 $\mu$ 的影响**（品种有趋势或漂移时）。
@@ -229,7 +228,7 @@ $$
 
 ### 6.3 t-MC（厚尾 t 分布 MC）
 **核心假设**：收益服从 t 分布，允许厚尾；$\\nu$ 自动拟合。  
-**口径**：最近 $w$ 天拟合 $\\mu_w,\\sigma_w,\\nu_w$ 后模拟。
+**口径**：最近 $w$ 天拟合 $\\sigma_w,\\nu_w$ 后模拟（均值默认取 0）。
 
 **适用场景**
 - **明显厚尾或跳跃品种**（黑色/化工/高波动品种等）。
@@ -1328,12 +1327,18 @@ export default function App() {
         const rAll = sub.map((x) => x.logRet).filter(Number.isFinite);
 
         const rMC = rAll.length > window ? rAll.slice(-window) : rAll;
-        const { mu: muW, sigma: sigmaW } = meanStd(rMC);
+        // MC 口径：均值取 0（中心化最近 window 日收益）
+        const rMC0 = (() => {
+          const { mu } = meanStd(rMC);
+          return rMC.map(v => v - mu);
+        })();
+        const { mu: muW_raw, sigma: sigmaW } = meanStd(rMC);
+        const muW = 0;
         const sigmaLatest = latestSigmaRolling(rAll, window);
 
         lines.push(`[单品种] ${cid}${idToName[cid] ? `（${idToName[cid]}）` : ""}`);
         lines.push(
-          `MC口径(最近${window}日)：μ_w=${muW.toFixed(6)}, σ_w=${sigmaW.toFixed(6)}`
+          `MC口径(最近${window}日)：μ=0, σ_w=${sigmaW.toFixed(6)}`
         );
         lines.push(`最新 σ_w(窗口) = ${sigmaLatest.toFixed(6)}\n`);
         
@@ -1373,7 +1378,7 @@ export default function App() {
 
           for (const T of Ts) {
             setProgressText(`MC 计算中：c=${c.toFixed(3)} T=${T} …`);
-            const out = await callWorkerSingle(rMC, c, T);
+            const out = await callWorkerSingle(rMC0, c, T);
             vList.push(out.var);
             if (mcMethod === "t_mc") nuFit = out.nu ?? out.df ?? nuFit;
           }
@@ -1393,7 +1398,7 @@ export default function App() {
             method: `${mcMethod === "t_mc" ? "t-MC" : "MC " + mcMethod}（${cid}）`,
             conf: c.toFixed(3),
             extra:
-              `z=${z.toFixed(3)} | μ_w=${muW.toFixed(6)} | σ_w=${sigmaW.toFixed(6)}` +
+              `z=${z.toFixed(3)} | μ=0 | σ_w=${sigmaW.toFixed(6)}` +
               (mcMethod === "t_mc" && nuFit ? ` | ν=${Number(nuFit).toFixed(3)}` : "") +
               ` | window=${window} | K=${sims}`,
             v1: fmtPct2(vList[0]),
@@ -1493,10 +1498,16 @@ export default function App() {
           .filter(Number.isFinite);
 
         const rpMC = rpHist.length > window ? rpHist.slice(-window) : rpHist;
-        const { mu: muW, sigma: sigmaW } = meanStd(rpMC);
+        // MC 口径：均值取 0（中心化最近 window 日组合收益）
+        const rpMC0 = (() => {
+          const { mu } = meanStd(rpMC);
+          return rpMC.map(v => v - mu);
+        })();
+        const { mu: muW_raw, sigma: sigmaW } = meanStd(rpMC);
+        const muW = 0;
 
         lines.push(`\n— 蒙特卡洛 组合 VaR（历史组合收益 i.i.d.，${mcMethod === "t_mc" ? "t-MC" : mcMethod}；最近${window}日口径）—`);
-        lines.push(`  μ_w=${muW.toFixed(6)}, σ_w=${sigmaW.toFixed(6)}`);
+        lines.push(`  μ=0, σ_w=${sigmaW.toFixed(6)}`);
 
         for (const c of confs) {
           const z = zFromConf(c);
@@ -1505,7 +1516,7 @@ export default function App() {
 
           for (const T of Ts) {
             setProgressText(`组合 MC：c=${c.toFixed(3)} T=${T} …`);
-            const out = await callWorkerSingle(rpMC, c, T);
+            const out = await callWorkerSingle(rpMC0, c, T);
             vList.push(out.var);
             if (mcMethod === "t_mc") nuFit = out.nu ?? out.df ?? nuFit;
           }
@@ -1525,7 +1536,7 @@ export default function App() {
             method: `${mcMethod === "t_mc" ? "t-MC" : "MC " + mcMethod}（组合）`,
             conf: c.toFixed(3),
             extra:
-              `z=${z.toFixed(3)} | μ_w=${muW.toFixed(6)} | σ_w=${sigmaW.toFixed(6)}` +
+              `z=${z.toFixed(3)} | μ=0 | σ_w=${sigmaW.toFixed(6)}` +
               (mcMethod === "t_mc" && nuFit ? ` | ν=${Number(nuFit).toFixed(3)}` : "") +
               ` | window=${window} | w=[${wTxt}] | K=${sims}`,
             v1: fmtPct2(vList[0]),
