@@ -1659,9 +1659,10 @@ export default function App() {
   };
 // ==================== UI ====================
   return (
-    <div className="h-full w-full bg-gradient-to-br from-slate-50 via-white to-slate-100 text-slate-900">
+    // 修改1: 改用 min-h-screen 配合 flex-col，去除固定 height，让页面自然生长
+    <div className="min-h-screen w-full bg-gradient-to-br from-slate-50 via-white to-slate-100 text-slate-900 flex flex-col">
       {/* 顶栏 */}
-      <div className="sticky top-0 z-10 bg-white/70 backdrop-blur border-b border-slate-200">
+      <div className="sticky top-0 z-20 bg-white/70 backdrop-blur border-b border-slate-200">
         <div className="max-w-[1600px] mx-auto px-4 py-3 flex flex-wrap items-center gap-2 sm:gap-3">
           <div className="text-lg font-bold tracking-tight">
             万能 VaR 计算器
@@ -1714,8 +1715,8 @@ export default function App() {
         </div>
       </div>
 
-      {/* 主体：只在最外层允许滚动 */}
-      <div className="max-w-[1600px] mx-auto h-[calc(100%-56px)] px-4 py-4 overflow-auto">
+      {/* 主体：修改2: 使用 flex-1 自动填充剩余空间，移除 overflow-auto，让浏览器管理滚动 */}
+      <div className="flex-1 w-full max-w-[1600px] mx-auto px-4 py-4">
         <div className="grid grid-cols-12 gap-4">
           {/* 参数区 */}
           <div className="col-span-12 lg:col-span-4 xl:col-span-3 space-y-3 pr-0 lg:pr-1">
@@ -2124,7 +2125,8 @@ export default function App() {
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
-                    className="text-sm whitespace-pre-wrap font-mono text-slate-800"
+                    // 修改3: 增加 max-h 和 overflow-y-auto，防止超长文本撑破页面
+                    className="text-sm whitespace-pre-wrap break-all font-mono text-slate-800 max-h-[300px] overflow-y-auto custom-scrollbar p-1"
                   >
                     {summary || "请先读取文件并设置参数。"}
                   </motion.pre>
