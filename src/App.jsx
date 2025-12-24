@@ -1700,7 +1700,7 @@ export default function App() {
               onClick={loadTestData}
               className="px-2.5 py-1.5 sm:px-3 sm:py-1.5 rounded-lg bg-white border shadow-sm text-xs sm:text-sm hover:bg-slate-50 active:scale-95 transition"
             >
-              加载内置数据（截止2025-12-12）
+              加载内置数据（截止2025-12-22）
             </button>
 
             {resultRows.length > 0 && (
