@@ -12,7 +12,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DIST_DIR = BASE_DIR / "static"  # 将前端 build 后的 dist 复制到这里
 DATA_DIR = BASE_DIR / "data"
 
-app = FastAPI(title="万能VaR计算器 Backend")
+app = FastAPI(title="VaR计算器 Backend")
 
 
 @app.get("/api/health")
@@ -46,3 +46,5 @@ def api_mc_single(payload: Dict[str, Any] = Body(...)):
 # 注意：部署时需要把前端 dist 拷贝到 backend/static
 if DIST_DIR.exists():
     app.mount("/", StaticFiles(directory=str(DIST_DIR), html=True), name="static")
+    
+# uvicorn app:app --host 0.0.0.0 --port 8000
