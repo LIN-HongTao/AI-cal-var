@@ -1,4 +1,4 @@
-# 万能 VaR 计算器（前端 HTML + 后端 Python）
+# VaR 计算器（前端 HTML + 后端 Python）
 
 ## 目录结构
 - `frontend/`：前端（Vite + React + Tailwind，最终会 build 成 `dist/` 静态 HTML/JS/CSS）
