@@ -24,7 +24,6 @@ import rehypeKatex from "rehype-katex";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
 
-import VarWorker from "./workers/varWorker?worker";
 import testData from "./data/testData.json";
 
 // ==================== 颜色调色板（多品种分色） ====================
@@ -109,7 +108,7 @@ $$
 - 行情图仅展示最近 $w$ 天价格走势。
 
 **经验推荐：**
-- 日频期货：$w=55$（约 1 季度）是平衡“及时性/稳定性”的常用取值。
+- 日频期货：$w=66$（约 1 季度）是平衡“及时性/稳定性”的常用取值。
 - 追求更平滑：$w=120$~$250$。
 - 若样本不足 $w$，自动退化为全样本估计。
 
@@ -268,15 +267,12 @@ $$
 ### 6.5 如何公平对比这些方法？
 当前版本已统一口径（MC 也用最近 $w$ 天），因此可直接横向对比：
 
-- **正态参数法 ≈ Normal MC**  
-  同 $w$ + 同正态假设 → 两者应高度一致（差异来自 MC 采样误差/是否带 $\\mu$）。
+- **正态参数法 ≈ Normal MC** 同 $w$ + 同正态假设 → 两者应高度一致（差异来自 MC 采样误差/是否带 $\\mu$）。
 
-- **t-MC 通常 ≥ Normal MC**  
-  若显著更大 → 厚尾/极端风险提升；  
+- **t-MC 通常 ≥ Normal MC** 若显著更大 → 厚尾/极端风险提升；  
   若接近 → 近期分布接近正态（$\\nu$ 拟合会偏大）。
 
-- **Bootstrap 取决于 $w$ 内极端日是否出现**  
-  Bootstrap 大而 Normal/t-MC 小 → 最近确实发生极端事件；  
+- **Bootstrap 取决于 $w$ 内极端日是否出现** Bootstrap 大而 Normal/t-MC 小 → 最近确实发生极端事件；  
   Bootstrap 小而 t-MC 大 → 历史未出现极端日，但形状提示厚尾。
 
 ---
@@ -308,14 +304,11 @@ $$
 ---
 
 ## 8. 常见问题
-**Q1：组合提示对齐日期太少？**  
-A：参与品种交易日交集太少，请减少品种或换重叠更多的品种。
+**Q1：组合提示对齐日期太少？** A：参与品种交易日交集太少，请减少品种或换重叠更多的品种。
 
-**Q2：t-MC 拟合的 $\nu$ 很小？**  
-A：近期极端波动显著、尾厚。可结合 Bootstrap 验证。
+**Q2：t-MC 拟合的 $\nu$ 很小？** A：近期极端波动显著、尾厚。可结合 Bootstrap 验证。
 
-**Q3：MC 结果不够稳定？**  
-A：提高模拟次数 $K$（如 200k→500k）或适当增大 $w$。
+**Q3：MC 结果不够稳定？** A：提高模拟次数 $K$（如 200k→500k）或适当增大 $w$。
 
 `;
 
@@ -450,9 +443,9 @@ const Help = ({ tip }) => {
         className="inline-flex items-center ml-1 align-middle"
       >
         <span
-          className="w-4 h-4 inline-flex items-center justify-center rounded-full
-                     bg-slate-100 text-slate-600 text-[10px] font-bold border border-slate-300
-                     cursor-help hover:bg-slate-900 hover:text-white transition"
+          className="w-3.5 h-3.5 inline-flex items-center justify-center rounded-full
+                     bg-slate-200 text-slate-500 text-[9px] font-bold border border-slate-300
+                     cursor-help hover:bg-blue-600 hover:text-white hover:border-blue-600 transition"
         >
           ?
         </span>
@@ -462,7 +455,7 @@ const Help = ({ tip }) => {
         createPortal(
           <div
             className="fixed z-[2147483647] w-[320px] max-w-[85vw]
-                       rounded-xl bg-slate-900 text-white text-xs leading-relaxed
+                       rounded-xl bg-slate-800 text-white text-xs leading-relaxed
                        px-3 py-2 shadow-2xl whitespace-pre-wrap
                        animate-in fade-in zoom-in-95"
             style={{
@@ -476,7 +469,7 @@ const Help = ({ tip }) => {
           >
             {renderTip(tip)}
             <div
-              className="absolute left-1/2 -translate-x-1/2 w-2 h-2 bg-slate-900 rotate-45"
+              className="absolute left-1/2 -translate-x-1/2 w-2 h-2 bg-slate-800 rotate-45"
               style={pos.place === "bottom" ? { top: -4 } : { bottom: -4 }}
             />
           </div>,
@@ -511,7 +504,7 @@ function zFromConf(conf) {
   return y > 0 ? x : -x;
 }
 
-function latestSigmaRolling(logRetArr, window = 55) {
+function latestSigmaRolling(logRetArr, window = 66) {
   const hist = logRetArr.filter((v) => Number.isFinite(v));
   if (hist.length < 2) return NaN;
   const sub = hist.length < window ? hist : hist.slice(-window);
@@ -665,104 +658,83 @@ function normalVarPortfolio(grouped, conf, T, window, weights) {
 }
 
 // ==================== UI 小组件 ====================
-const Card = ({ title, children, className }) => (
-  <motion.div
-    layout
-    initial={{ opacity: 0, y: 8 }}
-    animate={{ opacity: 1, y: 0 }}
-    transition={{ duration: 0.25 }}
-    className={clsx(
-      "bg-white/80 backdrop-blur rounded-2xl shadow-sm border border-slate-200 p-4",
-      className
-    )}
-  >
-    {title && <div className="font-semibold text-slate-800 mb-3">{title}</div>}
-    {children}
-  </motion.div>
-);
-
-const SectionCard = ({ id, title, openSection, setOpenSection, children }) => {
-  const isOpen = openSection === id;
-  return (
-    <Card
-      title={
-        <button
-          type="button"
-          onClick={() => setOpenSection(isOpen ? "" : id)}
-          className="w-full flex items-center justify-between text-left"
-        >
-          <span>{title}</span>
-          <span className="lg:hidden text-slate-400">
-            {isOpen ? "收起" : "展开"}
-          </span>
-        </button>
-      }
-      className="p-0"
-    >
-      <div
-        className={clsx(
-          "px-4 pb-4",
-          "lg:block",
-          isOpen ? "block" : "hidden"
-        )}
-      >
-        {children}
+// 扁平化 Card
+const Card = ({ title, children, className, actions }) => (
+  <div className={clsx("bg-white rounded-xl shadow-sm border border-gray-200 p-4", className)}>
+    {title && (
+      <div className="flex items-center justify-between mb-3 pb-2 border-b border-gray-100">
+        <div className="text-sm font-bold text-gray-700 uppercase tracking-wider">{title}</div>
+        {actions ? <div className="flex items-center gap-2">{actions}</div> : null}
       </div>
-    </Card>
-  );
-};
-
-const Field = ({ label, children }) => (
-  <label className="grid grid-cols-1 sm:grid-cols-2 items-center gap-2 sm:gap-3 text-sm">
-    <span className="text-slate-600">{label}</span>
+    )}
     {children}
-  </label>
+  </div>
 );
 
-// ==================== 进度遮罩 ====================
-const ProgressOverlay = ({ open, text = "计算中…" }) => {
-  if (!open) return null;
-  return createPortal(
-    <AnimatePresence>
-      <motion.div
-        className="fixed inset-0 z-[9999] bg-black/40 backdrop-blur-sm flex items-center justify-center p-6"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-      >
-        <motion.div
-          className="w-full max-w-[92vw] sm:max-w-md rounded-2xl bg-white shadow-2xl border border-slate-200 p-6"
-          initial={{ scale: 0.96, opacity: 0, y: 8 }}
-          animate={{ scale: 1, opacity: 1, y: 0 }}
-          exit={{ scale: 0.96, opacity: 0, y: 8 }}
-          transition={{ duration: 0.2 }}
-        >
-          <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-full border-4 border-slate-200 border-t-slate-900 animate-spin" />
-            <div>
-              <div className="font-semibold text-slate-900">正在计算 VaR</div>
-              <div className="text-sm text-slate-600 mt-0.5">{text}</div>
-            </div>
-          </div>
+// 新窗口 Portal：用于“文本摘要”弹窗（保持原样式）
+const NewWindowPortal = ({ title, onClose, children, features = "width=980,height=720" }) => {
+  const containerEl = useMemo(() => document.createElement("div"), []);
+  const winRef = useRef(null);
 
-          <div className="mt-5 h-3 w-full rounded-full bg-slate-100 overflow-hidden">
-            <motion.div
-              className="h-full w-1/2 rounded-full bg-gradient-to-r from-slate-900 via-slate-700 to-slate-900"
-              initial={{ x: "-100%" }}
-              animate={{ x: "200%" }}
-              transition={{ repeat: Infinity, duration: 1.1, ease: "linear" }}
-            />
-          </div>
+  React.useEffect(() => {
+    const w = window.open("", "_blank", features);
+    winRef.current = w;
 
-          <div className="text-xs text-slate-500 mt-3">
-            请勿关闭页面，计算完成后会自动恢复操作。
-          </div>
-        </motion.div>
-      </motion.div>
-    </AnimatePresence>,
-    document.body
-  );
+    // 弹窗被浏览器拦截时，直接回收状态
+    if (!w) {
+      onClose?.();
+      return;
+    }
+
+    w.document.title = title || document.title;
+
+    // 复制主窗口的样式（包含 Tailwind 构建 CSS + App.css）
+    const headNodes = Array.from(document.head.querySelectorAll('link[rel="stylesheet"], style'));
+    headNodes.forEach((n) => {
+      w.document.head.appendChild(n.cloneNode(true));
+    });
+
+    // 基础 body 样式
+    w.document.body.style.margin = "0";
+    w.document.body.style.background = "#F3F4F6";
+    w.document.body.appendChild(containerEl);
+
+    const handleUnload = () => onClose?.();
+    w.addEventListener("beforeunload", handleUnload);
+
+    return () => {
+      try {
+        w.removeEventListener("beforeunload", handleUnload);
+        w.close();
+      } catch (_) {}
+    };
+  }, []);
+
+  return createPortal(children, containerEl);
 };
+
+// 侧边栏使用的 Field (支持 label 传入组件)
+// 用于 Section 2 (Mapping)
+const SideField = ({ label, children }) => (
+  <div className="mb-2">
+    <label className="block text-xs font-semibold text-gray-500 mb-1 flex items-center">
+      {label}
+    </label>
+    {children}
+  </div>
+);
+
+// RowField: 用于 Section 3 & 4，实现左右布局 + 对齐
+const RowField = ({ label, children }) => (
+  <div className="flex items-center justify-between mb-1.5">
+    <label className="text-xs font-semibold text-gray-600 flex items-center gap-1 cursor-default shrink-0 mr-2">
+      {label}
+    </label>
+    <div className="w-[150px] flex-shrink-0">
+      {children}
+    </div>
+  </div>
+);
 
 const SymbolSelectorModal = ({
   open,
@@ -805,67 +777,66 @@ const SymbolSelectorModal = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="bg-white w-[92vw] max-w-3xl rounded-lg shadow-lg p-4 space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="text-lg font-semibold">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+      <div className="bg-white w-[92vw] max-w-3xl rounded-xl shadow-2xl p-5 space-y-4 animate-in fade-in zoom-in-95">
+        <div className="flex items-center justify-between border-b pb-3">
+          <div className="text-lg font-bold text-gray-800">
             {mode === "single" ? "选择单品种" : "选择组合品种"}
           </div>
           <button
-            className="px-2 py-1 rounded bg-gray-100 hover:bg-gray-200"
+            className="text-gray-400 hover:text-gray-600 p-1 rounded-full hover:bg-gray-100 transition"
             onClick={onClose}
-            onMouseDown={(e) => e.preventDefault()}
           >
-            关闭
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
           </button>
         </div>
 
-        <input
-          ref={inputRef}
-          value={selectorSearch}
-          placeholder="搜索品种代码/合约名称（支持中文）"
-          className="border rounded px-2 py-1 w-full"
-          onCompositionStart={() => {
-            isComposingRef.current = true;
-          }}
-          onCompositionEnd={(e) => {
-            // 组合结束，允许后续正常 onChange
-            isComposingRef.current = false;
-            // 再补一次最终值（有些输入法不会在 end 后再触发 change）
-            setSelectorSearch(e.target.value);
-          }}
-          onChange={(e) => {
-            // ✅ 组合态也要更新 state，让中文拼音能上屏
-            setSelectorSearch(e.target.value);
-          }}
-        />
+        <div className="relative">
+          <input
+            ref={inputRef}
+            value={selectorSearch}
+            placeholder="搜索品种代码/合约名称（支持中文）"
+            className="border border-gray-300 rounded-lg px-3 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            onCompositionStart={() => {
+              isComposingRef.current = true;
+            }}
+            onCompositionEnd={(e) => {
+              isComposingRef.current = false;
+              setSelectorSearch(e.target.value);
+            }}
+            onChange={(e) => {
+              setSelectorSearch(e.target.value);
+            }}
+          />
+          <div className="absolute right-3 top-2.5 text-gray-400">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+          </div>
+        </div>
 
 
         {mode === "portfolio" && (
-          <div className="flex gap-2 text-sm">
+          <div className="flex gap-2 text-xs">
             <button
-              className="px-2 py-1 rounded bg-gray-100 hover:bg-gray-200"
+              className="px-2 py-1 rounded bg-gray-100 text-gray-600 hover:bg-gray-200"
               onClick={() => setPortfolioIds([])}
-              onMouseDown={(e) => e.preventDefault()}
             >
               全不选
             </button>
             <button
-              className="px-2 py-1 rounded bg-gray-100 hover:bg-gray-200"
+              className="px-2 py-1 rounded bg-gray-100 text-gray-600 hover:bg-gray-200"
               onClick={() => setPortfolioIds(ids.slice())}
-              onMouseDown={(e) => e.preventDefault()}
             >
               全选
             </button>
-            <div className="text-gray-500 self-center">
-              已选 {portfolioIds.length} / {ids.length}
+            <div className="text-gray-400 self-center ml-auto">
+              已选 <span className="text-blue-600 font-bold">{portfolioIds.length}</span> / {ids.length}
             </div>
           </div>
         )}
 
-        <div className="border rounded p-2 max-h-[60vh] overflow-auto space-y-1">
+        <div className="border border-gray-200 rounded-lg p-2 max-h-[50vh] overflow-y-auto custom-scrollbar space-y-1 bg-gray-50">
           {filtered.length === 0 && (
-            <div className="text-sm text-gray-500">没有匹配的品种</div>
+            <div className="text-sm text-gray-400 text-center py-4">没有匹配的品种</div>
           )}
 
           {mode === "single" &&
@@ -878,8 +849,8 @@ const SymbolSelectorModal = ({
                 <button
                   key={id}
                   className={clsx(
-                    "w-full text-left px-2 py-1 rounded hover:bg-gray-50",
-                    active && "bg-blue-50 border border-blue-200"
+                    "w-full text-left px-3 py-2 rounded text-sm transition",
+                    active ? "bg-blue-100 text-blue-700 font-medium" : "hover:bg-white text-gray-700"
                   )}
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => {
@@ -901,11 +872,15 @@ const SymbolSelectorModal = ({
               return (
                 <label
                   key={id}
-                  className="flex items-center gap-2 px-2 py-1 rounded hover:bg-gray-50 cursor-pointer"
+                  className={clsx(
+                    "flex items-center gap-2 px-3 py-2 rounded text-sm cursor-pointer transition",
+                    checked ? "bg-blue-50 text-blue-700" : "hover:bg-white text-gray-700"
+                  )}
                   onMouseDown={(e) => e.preventDefault()}
                 >
                   <input
                     type="checkbox"
+                    className="rounded text-blue-600 focus:ring-blue-500"
                     checked={checked}
                     onChange={() => togglePortfolio(id)}
                   />
@@ -916,9 +891,9 @@ const SymbolSelectorModal = ({
         </div>
 
         {mode === "portfolio" && (
-          <div className="flex justify-end">
+          <div className="flex justify-end pt-2 border-t">
             <button
-              className="px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"
+              className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 text-sm font-medium shadow-sm transition"
               onMouseDown={(e) => e.preventDefault()}
               onClick={onClose}
             >
@@ -934,9 +909,6 @@ const SymbolSelectorModal = ({
 
 // ==================== 主 App ====================
 export default function App() {
-  const workerRef = useRef(null);
-  if (!workerRef.current) workerRef.current = new VarWorker();
-
   const chartRef = useRef(null);
   const manualBodyRef = useRef(null);
 
@@ -954,7 +926,7 @@ export default function App() {
   const [T1, setT1] = useState(1);
   const [T2, setT2] = useState(5);
   const [T3, setT3] = useState(22);
-  const [window, setWindow] = useState(55);
+  const [window, setWindow] = useState(66);
 
   const [mcMethod, setMcMethod] = useState("normal"); // normal | t_mc | bootstrap
   const [sims, setSims] = useState(200000);
@@ -975,12 +947,13 @@ export default function App() {
 
 
   const [showManual, setShowManual] = useState(false);
-  const [openSection, setOpenSection] = useState("data");
+  // const [openSection, setOpenSection] = useState("data"); // Sidebar 不需要折叠
 
   const [loading, setLoading] = useState(false);
   const [progressText, setProgressText] = useState("");
   const [resultRows, setResultRows] = useState([]);
   const [summary, setSummary] = useState("");
+  const [summaryWinOpen, setSummaryWinOpen] = useState(false);
 
   const [priceSeries, setPriceSeries] = useState([]);
   const [priceSeriesIds, setPriceSeriesIds] = useState([]);
@@ -1037,13 +1010,25 @@ export default function App() {
     autoSetColumns(cols);
   };
 
-  const loadTestData = () => {
-    setFileName("内置测试数据 testData.json");
-    setRawRows(testData);
-    const cols = testData.length ? Object.keys(testData[0]) : [];
-    setColumns(cols);
-    autoSetColumns(cols);
+  const loadTestData = async () => {
+    setFileName("内置测试数据");
+    try {
+      const resp = await fetch("/api/testdata");
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      setRawRows(data);
+      const cols = data.length ? Object.keys(data[0]) : [];
+      setColumns(cols);
+      autoSetColumns(cols);
+    } catch (err) {
+      // fallback：仍支持直接打包内置 JSON（与原版一致）
+      setRawRows(testData);
+      const cols = testData.length ? Object.keys(testData[0]) : [];
+      setColumns(cols);
+      autoSetColumns(cols);
+    }
   };
+
 
   const autoSetColumns = (cols) => {
     const autoPick = (cands) => {
@@ -1303,14 +1288,18 @@ export default function App() {
     );
     lines.push("");
 
-    const callWorkerSingle = (r, conf, T) =>
-      new Promise((resolve) => {
-        workerRef.current.onmessage = (e) => resolve(e.data);
-        workerRef.current.postMessage({
-          task: "mcSingle",
-          payload: { r, conf, T, sims, method: mcMethod, dfMax },
-        });
+    const callWorkerSingle = async (r, conf, T) => {
+      const resp = await fetch("/api/mcSingle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ r, conf, T, sims, method: mcMethod, dfMax }),
       });
+
+      if (!resp.ok) {
+        return { ok: false, error: `HTTP ${resp.status}` };
+      }
+      return resp.json();
+    };
 
     try {
       if (mode === "single") {
@@ -1590,51 +1579,48 @@ export default function App() {
     };
 
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-        <div className="bg-white w-[92vw] max-w-2xl rounded-lg shadow-lg p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="text-lg font-semibold">设置组合权重</div>
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+        <div className="bg-white w-[92vw] max-w-2xl rounded-xl shadow-2xl p-5 space-y-4 animate-in fade-in zoom-in-95">
+          <div className="flex items-center justify-between border-b pb-3">
+            <div className="text-lg font-bold text-gray-800">设置组合权重</div>
             <button
-              className="px-2 py-1 rounded bg-gray-100 hover:bg-gray-200"
+              className="text-gray-400 hover:text-gray-600 p-1 rounded-full hover:bg-gray-100 transition"
               onClick={onClose}
-              onMouseDown={(e) => e.preventDefault()}
             >
-              关闭
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
             </button>
           </div>
 
           <div className="text-sm text-gray-600">
-            当前已选 {ids.length} 个品种
+            当前已选 <span className="font-bold text-blue-600">{ids.length}</span> 个品种
           </div>
 
-          <div className="flex gap-2 text-sm">
+          <div className="flex gap-2 text-xs">
             <button
-              className="px-2 py-1 rounded bg-gray-100 hover:bg-gray-200"
+              className="px-2 py-1 rounded bg-gray-100 text-gray-600 hover:bg-gray-200"
               onClick={setEqual}
-              onMouseDown={(e) => e.preventDefault()}
             >
               等权(全部=1)
             </button>
             <button
-              className="px-2 py-1 rounded bg-gray-100 hover:bg-gray-200"
+              className="px-2 py-1 rounded bg-gray-100 text-gray-600 hover:bg-gray-200"
               onClick={() => setWeightsById({})}
-              onMouseDown={(e) => e.preventDefault()}
             >
               清空
             </button>
           </div>
 
-          <div className="border rounded p-2 max-h-[60vh] overflow-auto space-y-2">
+          <div className="border border-gray-200 rounded-lg p-2 max-h-[50vh] overflow-y-auto custom-scrollbar space-y-2 bg-gray-50">
             {ids.map((id) => {
               const label = idToName[id]
                 ? `${id}（${idToName[id]}）`
                 : id;
               const val = weightsById[id] ?? "";
               return (
-                <div key={id} className="flex items-center gap-2">
-                  <div className="flex-1 text-sm">{label}</div>
+                <div key={id} className="flex items-center gap-2 p-1 bg-white rounded shadow-sm border border-gray-100">
+                  <div className="flex-1 text-sm pl-2">{label}</div>
                   <input
-                    className="border rounded px-2 py-1 w-28 text-sm"
+                    className="border border-gray-300 rounded px-2 py-1 w-28 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
                     value={val}
                     onChange={(e) => setOne(id, e.target.value)}
                     placeholder="权重"
@@ -1644,11 +1630,10 @@ export default function App() {
             })}
           </div>
 
-          <div className="flex justify-end">
+          <div className="flex justify-end pt-2 border-t">
             <button
-              className="px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"
+              className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 text-sm font-medium shadow-sm transition"
               onClick={onClose}
-              onMouseDown={(e) => e.preventDefault()}
             >
               确认
             </button>
@@ -1657,577 +1642,451 @@ export default function App() {
       </div>
     );
   };
-// ==================== UI ====================
+
+  // ==================== 页面主体布局 ====================
   return (
-    // 修改1: 改用 min-h-screen 配合 flex-col，去除固定 height，让页面自然生长
-    <div className="min-h-screen w-full bg-gradient-to-br from-slate-50 via-white to-slate-100 text-slate-900 flex flex-col">
-      {/* 顶栏 */}
-      <div className="sticky top-0 z-20 bg-white/70 backdrop-blur border-b border-slate-200">
-        <div className="max-w-[1600px] mx-auto px-4 py-3 flex flex-wrap items-center gap-2 sm:gap-3">
-          <div className="text-lg font-bold tracking-tight">
-            万能 VaR 计算器
+    <div className="flex h-screen bg-[#F3F4F6] font-sans text-gray-900 overflow-hidden">
+      
+      {/* --- 左侧侧边栏 (Fixed Sidebar) --- */}
+      <aside className="w-[320px] bg-white border-r border-gray-200 flex flex-col h-full shadow-lg z-10 flex-shrink-0">
+        
+        {/* 头部：Logo & 手册 */}
+        <div className="p-3 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
+          <div className="flex items-center gap-2">
+            <div className="bg-blue-600 text-white p-1.5 rounded-lg shadow-md shadow-blue-200">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+            </div>
+            <h1 className="font-bold text-base text-gray-900 leading-tight">VaR<br/>计算器</h1>
+          </div>
+          <button 
+            onClick={() => setShowManual(true)}
+            className="text-xs font-bold text-gray-500 hover:text-blue-600 transition bg-gray-100 hover:bg-blue-50 px-2 py-1 rounded border border-transparent hover:border-blue-200"
+          >
+            【用户手册】
+          </button>
+        </div>
+
+        {/* 滚动区域：输入控件 */}
+        <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-4">
+          
+          {/* 1. 数据来源 */}
+          <div>
+            <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">1. 数据来源</label>
+            <div className="space-y-2">
+              <label className="border-2 border-dashed border-gray-200 rounded-lg p-3 text-center cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition group flex flex-col items-center justify-center h-20">
+                <input
+                  type="file"
+                  accept=".xlsx,.xls,.csv"
+                  className="hidden"
+                  onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])}
+                />
+                <svg className="w-6 h-6 text-gray-300 group-hover:text-blue-500 mb-1 transition" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+                <span className="text-xs text-gray-500 font-medium group-hover:text-blue-600 truncate max-w-full px-2">
+                  {fileName || "点击上传 Excel/CSV"}
+                </span>
+              </label>
+              
+              <div className="flex justify-between gap-2">
+                <button
+                  onClick={downloadTemplate}
+                  className="flex-1 py-1.5 rounded border border-gray-200 text-xs text-gray-600 hover:bg-gray-50 transition"
+                >
+                  下载模板
+                </button>
+                <button
+                  onClick={loadTestData}
+                  className="flex-1 py-1.5 rounded border border-gray-200 text-xs text-gray-600 hover:bg-gray-50 transition"
+                >
+                  加载内置数据<br/>(截止2025-12-30)
+                </button>
+              </div>
+            </div>
           </div>
 
-          <button
-            onClick={() => setShowManual(true)}
-            className="px-2.5 py-1.5 sm:px-3 sm:py-1.5 rounded-lg bg-white border shadow-sm text-xs sm:text-sm hover:bg-slate-50 active:scale-95 transition"
+          {/* 2. 列映射 */}
+          <div>
+            <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">2. 列映射 (自动识别)</label>
+            <div className="bg-gray-50 rounded-lg p-3 space-y-2 border border-gray-100">
+              <SideField label="品种ID列">
+                <select className="w-full text-xs border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500 bg-white" value={idCol} onChange={(e) => setIdCol(e.target.value)}>
+                  {columns.map(c => <option key={c}>{c}</option>)}
+                </select>
+              </SideField>
+              <SideField label="日期列">
+                <select className="w-full text-xs border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500 bg-white" value={dateCol} onChange={(e) => setDateCol(e.target.value)}>
+                  {columns.map(c => <option key={c}>{c}</option>)}
+                </select>
+              </SideField>
+              <SideField label="结算价列">
+                <select className="w-full text-xs border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500 bg-white" value={priceCol} onChange={(e) => setPriceCol(e.target.value)}>
+                  {columns.map(c => <option key={c}>{c}</option>)}
+                </select>
+              </SideField>
+              <SideField label="合约名称列 (可选)">
+                <select className="w-full text-xs border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500 bg-white" value={nameCol} onChange={(e) => setNameCol(e.target.value)}>
+                  <option value="">（无）</option>
+                  {columns.map(c => <option key={c}>{c}</option>)}
+                </select>
+              </SideField>
+            </div>
+          </div>
+
+          {/* 3. 参数设置 */}
+          <div>
+            <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">3. 共用参数</label>
+            <div className="space-y-1">
+              <RowField label={<>置信度 c1 <Help tip={HELP_TEXT.conf1} /></>}>
+                <input type="number" step="0.001" className="w-full text-xs border border-gray-300 rounded px-2 py-1 bg-white focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-colors" value={conf1} onChange={(e) => setConf1(+e.target.value)} />
+              </RowField>
+              <RowField label={<>置信度 c2 <Help tip={HELP_TEXT.conf2} /></>}>
+                <input type="number" step="0.001" className="w-full text-xs border border-gray-300 rounded px-2 py-1 bg-white focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-colors" value={conf2} onChange={(e) => setConf2(+e.target.value)} />
+              </RowField>
+              <RowField label={<>短期交易日 T1 <Help tip={HELP_TEXT.T1} /></>}>
+                <input type="number" min="1" className="w-full text-xs border border-gray-300 rounded px-2 py-1 bg-white focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-colors" value={T1} onChange={(e) => setT1(+e.target.value)} />
+              </RowField>
+              <RowField label={<>中期交易日 T2 <Help tip={HELP_TEXT.T2} /></>}>
+                <input type="number" min="1" className="w-full text-xs border border-gray-300 rounded px-2 py-1 bg-white focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-colors" value={T2} onChange={(e) => setT2(+e.target.value)} />
+              </RowField>
+              <RowField label={<>长期交易日 T3 <Help tip={HELP_TEXT.T3} /></>}>
+                <input type="number" min="1" className="w-full text-xs border border-gray-300 rounded px-2 py-1 bg-white focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-colors" value={T3} onChange={(e) => setT3(+e.target.value)} />
+              </RowField>
+              <RowField label={<>σ 窗口(天) <Help tip={HELP_TEXT.window} /></>}>
+                <input type="number" min="5" className="w-full text-xs border border-gray-300 rounded px-2 py-1 bg-white focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-colors" value={window} onChange={(e) => setWindow(+e.target.value)} />
+              </RowField>
+            </div>
+          </div>
+
+          {/* 4. Monte Carlo */}
+          <div>
+            <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">4. Monte Carlo 参数</label>
+            <div className="space-y-1">
+              <RowField label={<>MC 方法 <Help tip={HELP_TEXT.mcMethod} /></>}>
+                <select className="w-full text-xs border border-gray-300 rounded px-2 py-1 bg-white focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-colors" value={mcMethod} onChange={(e) => setMcMethod(e.target.value)}>
+                  <option value="normal">Normal MC（正态）</option>
+                  <option value="t_mc">t-MC（厚尾拟合）</option>
+                  <option value="bootstrap">Bootstrap（重采样）</option>
+                </select>
+              </RowField>
+              <RowField label={<>模拟次数 K <Help tip={HELP_TEXT.sims} /></>}>
+                <input type="number" min="1000" step="10000" className="w-full text-xs border border-gray-300 rounded px-2 py-1 bg-white focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-colors" value={sims} onChange={(e) => setSims(+e.target.value)} />
+              </RowField>
+              {mcMethod === "t_mc" && (
+                <RowField label={<>t ν 搜索上限 <Help tip={HELP_TEXT.dfMax} /></>}>
+                  <select className="w-full text-xs border border-gray-300 rounded px-2 py-1 bg-white focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-colors" value={dfMax} onChange={(e) => setDfMax(+e.target.value)}>
+                    <option value={5}>5 (非常厚尾/保守)</option>
+                    <option value={15}>15 (适度厚尾)</option>
+                    <option value={60}>60 (接近正态)</option>
+                  </select>
+                </RowField>
+              )}
+            </div>
+          </div>
+
+          {/* 5. 计算模式 */}
+          <div>
+            <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">5. 计算模式</label>
+            <div className="flex bg-gray-100 p-1 rounded-lg mb-3">
+              <button 
+                onClick={() => setMode("single")}
+                className={clsx("flex-1 text-xs py-1.5 rounded-md transition font-medium", mode === "single" ? "bg-white text-blue-600 shadow-sm" : "text-gray-500 hover:text-gray-700")}
+              >
+                单品种
+              </button>
+              <button 
+                onClick={() => setMode("portfolio")}
+                className={clsx("flex-1 text-xs py-1.5 rounded-md transition font-medium", mode === "portfolio" ? "bg-white text-blue-600 shadow-sm" : "text-gray-500 hover:text-gray-700")}
+              >
+                多品种组合
+              </button>
+            </div>
+
+            {mode === "single" ? (
+              <div className="bg-blue-50 border border-blue-100 rounded-lg p-3">
+                <button
+                  className="w-full text-left text-xs bg-white border border-blue-200 rounded px-2 py-1.5 text-blue-800 truncate mb-1"
+                  onClick={() => setSelectorOpen(true)}
+                  disabled={!idsAll.length}
+                >
+                  {singleId ? (idToName[singleId] ? `${singleId} (${idToName[singleId]})` : singleId) : "选择品种..."}
+                </button>
+                <div className="text-[10px] text-blue-400 text-center">点击上方按钮切换品种</div>
+              </div>
+            ) : (
+              <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 space-y-2">
+                <button
+                  className="w-full bg-white border border-blue-200 text-blue-700 text-xs py-1.5 rounded hover:bg-blue-50 transition"
+                  onClick={() => setSelectorOpen(true)}
+                  disabled={!idsAll.length}
+                >
+                  选择品种 ({portfolioIds.length})
+                </button>
+                <button
+                  className="w-full bg-white border border-blue-200 text-blue-700 text-xs py-1.5 rounded hover:bg-blue-50 transition"
+                  onClick={() => setWeightsOpen(true)}
+                  disabled={portfolioIds.length === 0}
+                >
+                  设置权重
+                </button>
+                <div className="text-[10px] text-blue-400">
+                  {portfolioIds.length ? `已选: ${portfolioIds.slice(0,3).join(", ")}${portfolioIds.length>3?"...":""}` : "请先选择品种"}
+                </div>
+              </div>
+            )}
+          </div>
+
+        </div>
+
+        {/* 底部按钮 */}
+        <div className="p-4 border-t border-gray-100 bg-gray-50 flex-shrink-0">
+          <motion.button
+            whileTap={{ scale: 0.98 }}
+            onClick={runCalc}
+            disabled={!rawRows.length || loading}
+            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-lg shadow-lg shadow-blue-500/30 transition transform active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-sm"
           >
-            用户手册
-          </button>
+            {loading ? (
+              <>
+                <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                <span>计算中...</span>
+              </>
+            ) : (
+              <>
+                <span>开始计算</span>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 7l5 5m0 0l-5 5m5-5H6"></path></svg>
+              </>
+            )}
+          </motion.button>
+        </div>
+      </aside>
 
-          <div className="ml-auto flex flex-wrap items-center gap-2">
-            <button
-              onClick={downloadTemplate}
-              className="px-2.5 py-1.5 sm:px-3 sm:py-1.5 rounded-lg bg-white border shadow-sm text-xs sm:text-sm hover:bg-slate-50 active:scale-95 transition"
-              title="下载标准数据模板"
-            >
-              下载标准数据模板
-            </button>
+      {/* --- 右侧内容区 (Main Content) --- */}
+      <main className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
+        
+        {/* 顶部状态栏 */}
+        <div className="h-16 border-b border-gray-200 bg-white/50 backdrop-blur flex items-center justify-between px-6 flex-shrink-0">
+          <div className="flex items-center gap-2 text-sm text-gray-500">
+            <span>当前状态:</span>
+            {loading ? (
+              <span className="text-blue-600 font-bold flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse"></span>
+                处理中
+              </span>
+            ) : resultRows.length > 0 ? (
+              <span className="text-green-600 font-bold flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-green-500"></span>
+                计算完成
+              </span>
+            ) : (
+              <span className="text-gray-400">就绪</span>
+            )}
+          </div>
 
-            <label className="px-2.5 py-1.5 sm:px-3 sm:py-1.5 rounded-lg bg-slate-900 text-white text-xs sm:text-sm cursor-pointer hover:opacity-90 active:scale-95 transition">
-              读取 Excel/CSV
-              <input
-                type="file"
-                accept=".xlsx,.xls,.csv"
-                className="hidden"
-                onChange={(e) =>
-                  e.target.files?.[0] && onFile(e.target.files[0])
-                }
-              />
-            </label>
-
-            <button
-              onClick={loadTestData}
-              className="px-2.5 py-1.5 sm:px-3 sm:py-1.5 rounded-lg bg-white border shadow-sm text-xs sm:text-sm hover:bg-slate-50 active:scale-95 transition"
-            >
-              加载内置数据（截止2025-12-30）
-            </button>
-
+          <div>
             {resultRows.length > 0 && (
               <button
                 onClick={exportResults}
-                className="px-2.5 py-1.5 sm:px-3 sm:py-1.5 rounded-lg bg-white border shadow-sm text-xs sm:text-sm hover:bg-slate-50 active:scale-95 transition"
+                className="flex items-center gap-1 text-xs font-bold text-white bg-green-600 hover:bg-green-700 px-3 py-1.5 rounded-md transition shadow-sm"
               >
-                导出结果
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                导出 Excel
               </button>
             )}
           </div>
         </div>
-      </div>
 
-      {/* 主体：修改2: 使用 flex-1 自动填充剩余空间，移除 overflow-auto，让浏览器管理滚动 */}
-      <div className="flex-1 w-full max-w-[1600px] mx-auto px-4 py-4">
-        <div className="grid grid-cols-12 gap-4">
-          {/* 参数区 */}
-          <div className="col-span-12 lg:col-span-4 xl:col-span-3 space-y-3 pr-0 lg:pr-1">
-            <SectionCard
-              id="data"
-              title="1. 数据输入"
-              openSection={openSection}
-              setOpenSection={setOpenSection}
-            >
-              <div className="text-sm text-slate-600">
-                {fileName || "未选择文件"}
+        {/* 滚动内容区 */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-4 scroll-smooth">
+{/* 结果表格 */}
+          <Card
+            title={
+              <div className="flex items-center gap-3">
+                <span>计算结果</span>
+
+                <button
+                  type="button"
+                  disabled={resultRows.length === 0}
+                  onClick={() => setSummaryWinOpen(true)}
+                  className={clsx(
+                    "text-xs font-bold px-3 py-1.5 rounded-md border transition shadow-sm",
+                    resultRows.length === 0
+                      ? "text-gray-400 bg-gray-100 border-gray-200 cursor-not-allowed shadow-none"
+                      : "text-blue-600 bg-blue-50 hover:bg-blue-100 border-blue-200"
+                  )}
+                >
+                  文本摘要
+                </button>
               </div>
-            </SectionCard>
-
-            <SectionCard
-              id="cols"
-              title="2. 列映射（自动识别，可手动修改）"
-              openSection={openSection}
-              setOpenSection={setOpenSection}
-            >
-              <div className="space-y-2">
-                <Field
-                  label={
-                    <span className="inline-flex items-center">
-                      品种ID列 <Help tip={HELP_TEXT.idCol} />
-                    </span>
-                  }
-                >
-                  <select
-                    className="w-full border rounded-lg px-2 py-1"
-                    value={idCol}
-                    onChange={(e) => setIdCol(e.target.value)}
-                  >
-                    {columns.map((c) => (
-                      <option key={c}>{c}</option>
-                    ))}
-                  </select>
-                </Field>
-
-                <Field
-                  label={
-                    <span className="inline-flex items-center">
-                      合约名称列（可选） <Help tip={HELP_TEXT.nameCol} />
-                    </span>
-                  }
-                >
-                  <select
-                    className="w-full border rounded-lg px-2 py-1"
-                    value={nameCol}
-                    onChange={(e) => setNameCol(e.target.value)}
-                  >
-                    <option value="">（无）</option>
-                    {columns.map((c) => (
-                      <option key={c}>{c}</option>
-                    ))}
-                  </select>
-                </Field>
-
-                <Field
-                  label={
-                    <span className="inline-flex items-center">
-                      日期列 <Help tip={HELP_TEXT.dateCol} />
-                    </span>
-                  }
-                >
-                  <select
-                    className="w-full border rounded-lg px-2 py-1"
-                    value={dateCol}
-                    onChange={(e) => setDateCol(e.target.value)}
-                  >
-                    {columns.map((c) => (
-                      <option key={c}>{c}</option>
-                    ))}
-                  </select>
-                </Field>
-
-                <Field
-                  label={
-                    <span className="inline-flex items-center">
-                      结算价列 <Help tip={HELP_TEXT.priceCol} />
-                    </span>
-                  }
-                >
-                  <select
-                    className="w-full border rounded-lg px-2 py-1"
-                    value={priceCol}
-                    onChange={(e) => setPriceCol(e.target.value)}
-                  >
-                    {columns.map((c) => (
-                      <option key={c}>{c}</option>
-                    ))}
-                  </select>
-                </Field>
-              </div>
-            </SectionCard>
-
-            <SectionCard
-              id="common"
-              title="3. 共用参数"
-              openSection={openSection}
-              setOpenSection={setOpenSection}
-            >
-              <div className="space-y-2">
-                <Field
-                  label={
-                    <span className="inline-flex items-center">
-                      置信度 c1 <Help tip={HELP_TEXT.conf1} />
-                    </span>
-                  }
-                >
-                  <input
-                    type="number"
-                    step="0.001"
-                    min="0.8"
-                    max="0.999"
-                    className="w-full border rounded-lg px-2 py-1"
-                    value={conf1}
-                    onChange={(e) => setConf1(+e.target.value)}
-                  />
-                </Field>
-
-                <Field
-                  label={
-                    <span className="inline-flex items-center">
-                      置信度 c2 <Help tip={HELP_TEXT.conf2} />
-                    </span>
-                  }
-                >
-                  <input
-                    type="number"
-                    step="0.001"
-                    min="0.8"
-                    max="0.999"
-                    className="w-full border rounded-lg px-2 py-1"
-                    value={conf2}
-                    onChange={(e) => setConf2(+e.target.value)}
-                  />
-                </Field>
-
-                <Field
-                  label={
-                    <span className="inline-flex items-center">
-                      短期交易日 T1 <Help tip={HELP_TEXT.T1} />
-                    </span>
-                  }
-                >
-                  <input
-                    type="number"
-                    min="1"
-                    className="w-full border rounded-lg px-2 py-1"
-                    value={T1}
-                    onChange={(e) => setT1(+e.target.value)}
-                  />
-                </Field>
-
-                <Field
-                  label={
-                    <span className="inline-flex items-center">
-                      中期交易日 T2 <Help tip={HELP_TEXT.T2} />
-                    </span>
-                  }
-                >
-                  <input
-                    type="number"
-                    min="1"
-                    className="w-full border rounded-lg px-2 py-1"
-                    value={T2}
-                    onChange={(e) => setT2(+e.target.value)}
-                  />
-                </Field>
-
-                <Field
-                  label={
-                    <span className="inline-flex items-center">
-                      长期交易日 T3 <Help tip={HELP_TEXT.T3} />
-                    </span>
-                  }
-                >
-                  <input
-                    type="number"
-                    min="1"
-                    className="w-full border rounded-lg px-2 py-1"
-                    value={T3}
-                    onChange={(e) => setT3(+e.target.value)}
-                  />
-                </Field>
-
-                <Field
-                  label={
-                    <span className="inline-flex items-center">
-                      σ 窗口（交易日） <Help tip={HELP_TEXT.window} />
-                    </span>
-                  }
-                >
-                  <input
-                    type="number"
-                    min="5"
-                    max="500"
-                    className="w-full border rounded-lg px-2 py-1"
-                    value={window}
-                    onChange={(e) => setWindow(+e.target.value)}
-                  />
-                </Field>
-              </div>
-            </SectionCard>
-
-            <SectionCard
-              id="mc"
-              title="4. Monte Carlo 参数"
-              openSection={openSection}
-              setOpenSection={setOpenSection}
-            >
-              <div className="space-y-2">
-                <Field
-                  label={
-                    <span className="inline-flex items-center">
-                      MC 方法 <Help tip={HELP_TEXT.mcMethod} />
-                    </span>
-                  }
-                >
-                  <select
-                    className="w-full border rounded-lg px-2 py-1"
-                    value={mcMethod}
-                    onChange={(e) => setMcMethod(e.target.value)}
-                  >
-                    <option value="normal">Normal MC（正态）</option>
-                    <option value="t_mc">t-MC（厚尾，ν自动拟合）</option>
-                    <option value="bootstrap">Bootstrap MC（历史重采样）</option>
-                  </select>
-                </Field>
-
-                <Field
-                  label={
-                    <span className="inline-flex items-center">
-                      模拟次数 K <Help tip={HELP_TEXT.sims} />
-                    </span>
-                  }
-                >
-                  <input
-                    type="number"
-                    min="1000"
-                    step="10000"
-                    className="w-full border rounded-lg px-2 py-1"
-                    value={sims}
-                    onChange={(e) => setSims(+e.target.value)}
-                  />
-                </Field>
-
-                {mcMethod === "t_mc" && (
-                <Field
-                  label={
-                    <span className="inline-flex items-center">
-                      t ν 搜索上限 <Help tip={HELP_TEXT.dfMax} />
-                    </span>
-                  }
-                >
-                  <select
-                    className="w-full border rounded-lg px-2 py-1"
-                    value={dfMax}
-                    onChange={(e) => setDfMax(+e.target.value)}
-                  >
-                    <option value={5}>5（尾部很厚/更保守）</option>
-                    <option value={15}>15（中等厚尾/中性）</option>
-                    <option value={60}>60（接近正态/较薄尾）</option>
-                  </select>
-                </Field>
-              )}
-              </div>
-            </SectionCard>
-
-            <SectionCard
-              id="mode"
-              title={
-                <span className="inline-flex items-center">
-                  5. 计算模式 <Help tip={HELP_TEXT.mode} />
-                </span>
-              }
-              openSection={openSection}
-              setOpenSection={setOpenSection}
-            >
-              <div className="space-y-3">
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setMode("single")}
-                    className={clsx(
-                      "px-3 py-1.5 rounded-lg border text-sm transition",
-                      mode === "single"
-                        ? "bg-slate-900 text-white border-slate-900"
-                        : "bg-white hover:bg-slate-50"
-                    )}
-                  >
-                    单品种
-                  </button>
-                  <button
-                    onClick={() => setMode("portfolio")}
-                    className={clsx(
-                      "px-3 py-1.5 rounded-lg border text-sm transition",
-                      mode === "portfolio"
-                        ? "bg-slate-900 text-white border-slate-900"
-                        : "bg-white hover:bg-slate-50"
-                    )}
-                  >
-                    多品种组合
-                  </button>
-                </div>
-
-                {mode === "single" && (
-                  <div className="flex items-center gap-2 text-sm flex-wrap">
-                    <button
-                      className="px-3 py-1 rounded bg-gray-200 hover:bg-gray-300"
-                      onClick={() => setSelectorOpen(true)}
-                      disabled={!idsAll.length}
-                    >
-                      选择品种
-                    </button>
-
-                    <div className="text-gray-700">
-                      当前：
-                      {singleId
-                        ? idToName[singleId]
-                          ? `${singleId}（${idToName[singleId]}）`
-                          : singleId
-                        : "未选择（计算时自动取第一个有效品种）"}
-                    </div>
-                  </div>
-                )}
-
-
-                {mode === "portfolio" && (
-                  <div className="space-y-2 text-sm">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <button
-                        className="px-3 py-1 rounded bg-gray-200 hover:bg-gray-300"
-                        onClick={() => setSelectorOpen(true)}
-                        disabled={!idsAll.length}
-                      >
-                        选择品种（可搜索）
-                      </button>
-
-                      <button
-                        className="px-3 py-1 rounded bg-gray-100 hover:bg-gray-200"
-                        onClick={() => setPortfolioIds([])}
-                      >
-                        全不选
-                      </button>
-
-                      <div className="text-gray-600">
-                        已选 {portfolioIds.length} 个：
-                        {portfolioIds.length
-                          ? portfolioIds.slice(0, 6).join(", ") +
-                            (portfolioIds.length > 6 ? " ..." : "")
-                          : "无"}
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <button
-                        className="px-3 py-1 rounded bg-gray-200 hover:bg-gray-300"
-                        onClick={() => setWeightsOpen(true)}
-                        disabled={portfolioIds.length === 0}
-                      >
-                        设置权重
-                      </button>
-
-                      <div className="text-gray-600 text-sm">
-                        权重摘要：
-                        {portfolioIds.length === 0
-                          ? "未选择品种"
-                          : portfolioIds
-                              .map((id) => {
-                                const w = weightsById[id];
-                                const show = Number.isFinite(toNumber(w))
-                                  ? Number(w).toFixed(3)
-                                  : "—";
-                                return `${id}:${show}`;
-                              })
-                              .slice(0, 6)
-                              .join(", ") +
-                            (portfolioIds.length > 6 ? " ..." : "")}
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-              </div>
-            </SectionCard>
-
-            <motion.button
-              whileTap={{ scale: 0.97 }}
-              onClick={runCalc}
-              disabled={!rawRows.length || loading}
-              className="w-full py-2.5 rounded-xl bg-gradient-to-r from-slate-900 to-slate-700 text-white font-medium shadow
-                         disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {loading ? "计算中…" : "开始计算"}
-            </motion.button>
-          </div>
-
-          {/* 结果区 */}
-          <div className="col-span-12 lg:col-span-8 xl:col-span-9 flex flex-col gap-4">
-            <Card title="结果输出（文本摘要）">
-              <AnimatePresence mode="wait">
-                {!loading ? (
-                  <motion.pre
-                    key="summary"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    // 修改3: 增加 max-h 和 overflow-y-auto，防止超长文本撑破页面
-                    className="text-sm whitespace-pre-wrap break-all font-mono text-slate-800 max-h-[300px] overflow-y-auto custom-scrollbar p-1"
-                  >
-                    {summary || "请先读取文件并设置参数。"}
-                  </motion.pre>
-                ) : (
-                  <motion.div key="placeholder" className="text-slate-500 text-sm">
-                    计算中…结果将自动更新
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </Card>
-
-            <Card title="结果输出（表格视图）">
-              <div className="w-full overflow-x-auto">
-                <table className="min-w-[720px] w-full text-sm">
-                  <thead className="bg-white">
-                    <tr className="text-left border-b">
-                      <th className="py-2">方法</th>
-                      <th>置信度 c</th>
-                      <th>附加参数</th>
-                      <th>{`T1 VaR (${T1}天)`}</th>
-                      <th>{`T2 VaR (${T2}天)`}</th>
-                      <th>{`T3 VaR (${T3}天)`}</th>
+            }
+          >
+            <div className="overflow-x-auto rounded-lg border border-gray-100">
+              <table className="w-full text-sm text-left">
+                <thead className="bg-gray-50 text-gray-600 font-semibold border-b border-gray-200">
+                  <tr>
+                    <th className="px-4 py-3">方法</th>
+                    <th className="px-4 py-3">置信度 c</th>
+                    <th className="px-4 py-3">参数细节</th>
+                    <th className="px-4 py-3 text-right">T1 ({T1}天)</th>
+                    <th className="px-4 py-3 text-right">T2 ({T2}天)</th>
+                    <th className="px-4 py-3 text-right">T3 ({T3}天)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {resultRows.length === 0 ? (
+                    <tr>
+                      <td colSpan="6" className="px-4 py-8 text-center text-gray-400 italic">暂无数据</td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {resultRows.map((r, i) => (
-                      <tr
-                        key={i}
-                        className="border-b last:border-0 hover:bg-slate-50 transition"
-                      >
-                        <td className="py-2">{r.method}</td>
-                        <td>{r.conf}</td>
-                        <td className="max-w-[360px] truncate" title={r.extra}>
-                          {r.extra}
-                        </td>
-                        <td>{r.v1}</td>
-                        <td>{r.v2}</td>
-                        <td>{r.v3}</td>
+                  ) : (
+                    resultRows.map((r, i) => (
+                      <tr key={i} className="hover:bg-blue-50/30 transition">
+                        <td className="px-4 py-3 font-medium text-gray-800">{r.method}</td>
+                        <td className="px-4 py-3 text-gray-600">{r.conf}</td>
+                        <td className="px-4 py-3 text-xs text-gray-500 truncate max-w-[200px]" title={r.extra}>{r.extra}</td>
+                        <td className="px-4 py-3 text-right font-mono text-blue-600 font-bold">{r.v1}</td>
+                        <td className="px-4 py-3 text-right font-mono text-blue-600 font-bold">{r.v2}</td>
+                        <td className="px-4 py-3 text-right font-mono text-blue-600 font-bold">{r.v3}</td>
                       </tr>
-                    ))}
-                    {!resultRows.length && (
-                      <tr>
-                        <td colSpan={6} className="py-8 text-center text-slate-500">
-                          暂无结果
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-              <div className="text-xs text-slate-500 mt-2">
-                表格仅展示 VaR 百分比（保留两位小数）。
-              </div>
-            </Card>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </Card>
 
-            <Card title="行情走势图（价格）">
-              {lastCalcMode === "portfolio" && priceSeriesIds.length > 8 ? (
-                <div className="border rounded p-4 text-sm text-slate-600 bg-slate-50">
-                  已选择 {priceSeriesIds.length} 个品种，超过 8 个。为保证展示清晰度，价格走势图已自动隐藏。请将品种数量减少到 8 个及以下再查看价格图。
-                </div>
-              ) : (
-                <>
-                  <div ref={chartRef} className="h-[260px] sm:h-[320px] lg:h-[360px]">
+          {/* 图表区域 */}
+          <div className="grid grid-cols-1 gap-6">
+            <Card title={`行情走势图 (最近${window}个交易日)`}>
+              <div className="h-[280px] w-full bg-white rounded-lg p-2">
+                {priceSeries.length > 0 ? (
+                  lastCalcMode === "portfolio" && priceSeriesIds.length > 8 ? (
+                    <div className="h-full flex items-center justify-center text-gray-400 text-sm bg-gray-50 rounded border border-dashed">
+                      组合品种过多 (&gt;8)，已自动隐藏图表以保证性能。
+                    </div>
+                  ) : (
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart data={priceSeries}>
-                        <XAxis
-                          dataKey="date"
-                          tickMargin={8}
-                          minTickGap={18}
-                          tick={{ fontSize: 10 }}
+                        <XAxis 
+                          dataKey="date" 
+                          tick={{fontSize: 10, fill: '#9CA3AF'}} 
+                          axisLine={{stroke: '#E5E7EB'}}
+                          tickLine={false}
+                          minTickGap={30}
                         />
-                        <YAxis domain={["auto", "auto"]} />
-                        <Tooltip />
-                        <Legend />
+                        <YAxis 
+                          domain={["auto", "auto"]} 
+                          tick={{fontSize: 10, fill: '#9CA3AF'}} 
+                          axisLine={false}
+                          tickLine={false}
+                          width={40}
+                        />
+                        <Tooltip 
+                          contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'}}
+                          itemStyle={{fontSize: '12px'}}
+                          labelStyle={{color: '#6B7280', marginBottom: '4px', fontSize: '11px'}}
+                        />
+                        <Legend iconType="circle" wrapperStyle={{fontSize: '11px', paddingTop: '10px'}}/>
                         {priceSeriesIds.map((id, idx) => (
                           <Line
                             key={id}
                             type="monotone"
                             dataKey={id}
                             dot={false}
-                            connectNulls={true}
-                            name={idToName[id] ? `${id}（${idToName[id]}）` : id}
-                            stroke={PALETTE[idx % PALETTE.length]}
                             strokeWidth={2}
+                            stroke={PALETTE[idx % PALETTE.length]}
+                            activeDot={{r: 4}}
+                            name={idToName[id] ? `${id}(${idToName[id]})` : id}
+                            connectNulls
                           />
                         ))}
                       </LineChart>
                     </ResponsiveContainer>
+                  )
+                ) : (
+                  <div className="h-full flex items-center justify-center text-gray-300">
+                    <div className="flex flex-col items-center">
+                      <svg className="w-12 h-12 mb-2 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"></path></svg>
+                      <span>暂无行情数据</span>
+                    </div>
                   </div>
-                  <div className="text-xs text-slate-500 mt-2">
-                    仅展示最近 {window} 个交易日的价格走势（0 值/缺失已前向填充）。
-                  </div>
-                </>
-              )}
+                )}
+              </div>
             </Card>
           </div>
-        </div>
-      </div>
 
-      {/* 进度遮罩 */}
-      <ProgressOverlay open={loading} text={progressText || "Monte Carlo 计算中…"} />
+          <div className="h-4"></div> {/* Bottom spacer */}
+        </div>
+      </main>
+
+
+      {/* 文本摘要弹窗（同用户手册风格 modal） */}
+      <AnimatePresence>
+        {summaryWinOpen && (
+          <motion.div
+            className="fixed inset-0 z-[9998] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setSummaryWinOpen(false)}
+          >
+            <motion.div
+              className="bg-white rounded-2xl shadow-xl border border-slate-200
+                        w-full max-w-4xl max-h-[90vh] sm:max-h-[85vh]
+                        flex flex-col overflow-hidden"
+              initial={{ scale: 0.96, opacity: 0, y: 8 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.96, opacity: 0, y: 8 }}
+              transition={{ duration: 0.2 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* 固定头部 */}
+              <div className="sticky top-0 z-20 bg-white/95 backdrop-blur border-b border-slate-200 px-6 py-4 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="text-lg font-bold text-gray-800">文本摘要</div>
+                  <div className="text-xs text-gray-500">
+                    （口径说明 / 中间拟合值 / 计算信息）
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setSummaryWinOpen(false)}
+                  className="text-gray-400 hover:text-gray-600 transition"
+                  aria-label="关闭"
+                  title="关闭"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              {/* 正文：同用户手册一样可滚动 */}
+              <div className="flex-1 overflow-auto px-8 py-6 custom-scrollbar">
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 shadow-sm">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="text-sm font-semibold text-slate-700">计算结果（文本摘要）</div>
+                    <div className="text-xs text-slate-500">
+                      {resultRows.length > 0 ? "已生成" : "暂无结果"}
+                    </div>
+                  </div>
+
+                  <div className="bg-white border border-slate-200 rounded-lg p-4 font-mono text-xs leading-relaxed overflow-x-auto">
+                    {loading ? (
+                      <div className="flex items-center gap-2 text-slate-500">
+                        <div className="animate-spin h-3 w-3 border-2 border-slate-400 border-t-transparent rounded-full" />
+                        正在进行蒙特卡洛模拟...
+                      </div>
+                    ) : summary ? (
+                      <pre className="whitespace-pre-wrap text-slate-800">{summary}</pre>
+                    ) : (
+                      <div className="text-slate-500 italic">请在左侧加载数据并点击“开始计算”...</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* 用户手册弹窗 */}
       <AnimatePresence>
@@ -2241,8 +2100,8 @@ export default function App() {
           >
             <motion.div
               className="bg-white rounded-2xl shadow-xl border border-slate-200 
-                         w-full max-w-4xl max-h-[90vh] sm:max-h-[85vh] 
-                         flex flex-col overflow-hidden"
+                          w-full max-w-4xl max-h-[90vh] sm:max-h-[85vh] 
+                          flex flex-col overflow-hidden"
               initial={{ scale: 0.96, opacity: 0, y: 8 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.96, opacity: 0, y: 8 }}
@@ -2250,24 +2109,23 @@ export default function App() {
               onClick={(e) => e.stopPropagation()}
             >
               {/* 固定头部 */}
-              <div className="sticky top-0 z-20 bg-white/95 backdrop-blur border-b border-slate-200 px-4 sm:px-6 py-3 flex items-center">
-                <div className="text-lg font-bold">用户手册</div>
-
-                <div className="ml-auto flex items-center gap-2">
+              <div className="sticky top-0 z-20 bg-white/95 backdrop-blur border-b border-slate-200 px-6 py-4 flex items-center justify-between">
+                <div className="text-lg font-bold text-gray-800">用户手册</div>
+                <div className="flex items-center gap-3">
                   <button
                     type="button"
                     onClick={downloadManualPDF}
-                    className="px-3 py-1.5 rounded-lg text-sm border hover:bg-slate-50 active:scale-95 transition"
+                    className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm border hover:bg-gray-50 active:scale-95 transition text-gray-600"
                   >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
                     下载 PDF
                   </button>
-
                   <button
                     type="button"
                     onClick={() => setShowManual(false)}
-                    className="px-3 py-1.5 rounded-lg text-sm border hover:bg-slate-50 active:scale-95 transition"
+                    className="text-gray-400 hover:text-gray-600 transition"
                   >
-                    关闭
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                   </button>
                 </div>
               </div>
@@ -2275,61 +2133,26 @@ export default function App() {
               {/* 只滚动正文 */}
               <div
                 ref={manualBodyRef}
-                className="manual-body flex-1 overflow-auto px-4 sm:px-6 py-3 sm:py-4"
+                className="manual-body flex-1 overflow-auto px-8 py-6 custom-scrollbar"
               >
-                <div className="text-slate-900">
+                <div className="text-slate-800 prose prose-sm max-w-none">
                   <ReactMarkdown
                     remarkPlugins={[remarkMath]}
                     rehypePlugins={[rehypeKatex]}
                     components={{
-                      h1: (p) => (
-                        <h1 className="text-2xl font-bold mt-2 mb-4" {...p} />
-                      ),
-                      h2: (p) => (
-                        <h2 className="text-xl font-semibold mt-6 mb-3" {...p} />
-                      ),
-                      h3: (p) => (
-                        <h3 className="text-lg font-semibold mt-4 mb-2" {...p} />
-                      ),
-                      p: (p) => (
-                        <p
-                          className="text-sm leading-7 my-2 text-slate-800"
-                          {...p}
-                        />
-                      ),
-                      ul: (p) => (
-                        <ul
-                          className="list-disc pl-5 my-2 space-y-1 text-sm"
-                          {...p}
-                        />
-                      ),
-                      ol: (p) => (
-                        <ol
-                          className="list-decimal pl-5 my-2 space-y-1 text-sm"
-                          {...p}
-                        />
-                      ),
+                      h1: (p) => <h1 className="text-2xl font-bold mt-2 mb-4 pb-2 border-b text-gray-900" {...p} />,
+                      h2: (p) => <h2 className="text-xl font-bold mt-8 mb-4 text-gray-800 flex items-center gap-2 before:content-[''] before:block before:w-1 before:h-6 before:bg-blue-600 before:rounded-full" {...p} />,
+                      h3: (p) => <h3 className="text-lg font-semibold mt-6 mb-2 text-gray-700" {...p} />,
+                      p: (p) => <p className="text-sm leading-7 my-3 text-gray-600" {...p} />,
+                      ul: (p) => <ul className="list-disc pl-5 my-3 space-y-1 text-sm text-gray-600" {...p} />,
+                      ol: (p) => <ol className="list-decimal pl-5 my-3 space-y-1 text-sm text-gray-600" {...p} />,
                       li: (p) => <li className="leading-7" {...p} />,
-                      blockquote: (p) => (
-                        <blockquote
-                          className="border-l-4 border-slate-300 pl-3 py-1 my-3 text-slate-600 bg-slate-50 rounded-r"
-                          {...p}
-                        />
-                      ),
+                      blockquote: (p) => <blockquote className="border-l-4 border-blue-200 pl-4 py-2 my-4 text-gray-500 bg-blue-50/50 rounded-r-lg italic" {...p} />,
                       code: ({ inline, className, children, ...props }) =>
                         inline ? (
-                          <code
-                            className="px-1 py-0.5 rounded bg-slate-100 text-slate-900 text-[0.9em]"
-                            {...props}
-                          >
-                            {children}
-                          </code>
+                          <code className="px-1.5 py-0.5 rounded bg-gray-100 text-pink-600 font-mono text-[0.9em] border border-gray-200" {...props}>{children}</code>
                         ) : (
-                          <pre className="bg-slate-900 text-slate-50 rounded-xl p-3 overflow-auto text-xs my-3">
-                            <code className={className} {...props}>
-                              {children}
-                            </code>
-                          </pre>
+                          <pre className="bg-gray-800 text-gray-100 rounded-xl p-4 overflow-auto text-xs my-4 shadow-inner font-mono"><code className={className} {...props}>{children}</code></pre>
                         ),
                     }}
                   >
@@ -2341,27 +2164,29 @@ export default function App() {
           </motion.div>
         )}
       </AnimatePresence>
-    <SymbolSelectorModal
-      open={selectorOpen}
-      onClose={() => setSelectorOpen(false)}
-      mode={mode}
-      ids={idsAll}
-      idToName={idToName}
-      singleId={singleId}
-      setSingleId={setSingleId}
-      portfolioIds={portfolioIds}
-      setPortfolioIds={setPortfolioIds}
-      selectorSearch={selectorSearch}
-      setSelectorSearch={setSelectorSearch}
-    />
-    <WeightsModal
-      open={weightsOpen}
-      onClose={() => setWeightsOpen(false)}
-      ids={portfolioIds}
-      idToName={idToName}
-      weightsById={weightsById}
-      setWeightsById={setWeightsById}
-    />
+
+
+      <SymbolSelectorModal
+        open={selectorOpen}
+        onClose={() => setSelectorOpen(false)}
+        mode={mode}
+        ids={idsAll}
+        idToName={idToName}
+        singleId={singleId}
+        setSingleId={setSingleId}
+        portfolioIds={portfolioIds}
+        setPortfolioIds={setPortfolioIds}
+        selectorSearch={selectorSearch}
+        setSelectorSearch={setSelectorSearch}
+      />
+      <WeightsModal
+        open={weightsOpen}
+        onClose={() => setWeightsOpen(false)}
+        ids={portfolioIds}
+        idToName={idToName}
+        weightsById={weightsById}
+        setWeightsById={setWeightsById}
+      />
 
     </div>
   );
